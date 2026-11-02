@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Rounded watch body with a lime time bar. -->
+    <path android:fillColor="#233326" android:pathData="M38,30h32a8,8 0,0 1,8 8v32a8,8 0,0 1,-8 8h-32a8,8 0,0 1,-8 -8v-32a8,8 0,0 1,8 -8z" />
+    <path android:fillColor="#C9F57B" android:pathData="M42,48h24v5h-24z" />
+    <path android:fillColor="#C9F57B" android:pathData="M42,57h14v4h-14z" />
+    <path android:fillColor="#577E4B" android:pathData="M44,22h20v8h-20zM44,78h20v8h-20z" />
+</vector>

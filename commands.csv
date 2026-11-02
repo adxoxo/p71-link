@@ -1,0 +1,76 @@
+declared_name,declared_value_hex,runtime_value_hex,wire_opcode_supported_by_evidence,request_classes,named_target_operation,target_status,payload_schema
+CMD_AGPS_SWITCH,30,30,True,AgpsReq; AgpsReq$1; AgpsReq$2,,unverified,unresolved
+CMD_ANTI_LOST_RATE,50,50,True,FindDeviceReq,Find watch,sdk_only,"SDK request [0x55, 0xAA]. Vibration and display untested."
+CMD_AUTO_BLOOD_OXYGEN,2C,2C,True,BloodOxygenSettingReq,Automatic blood oxygen,verified_write_readback_restored,"Read [1]. Write [2, enabled]. Enabled: 0 off, 1 on. Read reply: action, enabled."
+CMD_BIND_SUCCESS,10,10,False,,,unverified,unresolved
+CMD_BP_TIMING_MONITOR_CONFIRM,0E,0E,True,BpReadConformReq,,unverified,unresolved
+CMD_BP_TIMING_MONITOR_DATA,0D,0D,False,,,unverified,unresolved
+CMD_BP_TIMING_MONITOR_SWITCH,0C,0C,True,BpSettingReq,,unverified,unresolved
+CMD_BlackList_LOCATION,2D,2D,True,BlackListReq,,unverified,unresolved
+CMD_CALIBRATION_RATE,20,20,False,,,unverified,unresolved
+CMD_DATA_LENGTH,00,10,False,,,unverified,unresolved
+CMD_DEVICE_AVATAR,32,32,True,DeviceAvatarReq,,unverified,unresolved
+CMD_DEVICE_BATTERY_SAVING,76,76,True,BatterySavingReq,,unverified,unresolved
+CMD_DEVICE_DIAL_INDEX,75,75,True,DialIndexReq,,unverified,unresolved
+CMD_DEVICE_NOTIFY,73,73,False,,,unverified,unresolved
+CMD_DISPLAY_CLOCK,12,12,True,DisplayClockReq,,unverified,unresolved
+CMD_DISPLAY_STYLE,2A,2A,True,DisplayStyleReq,,unverified,unresolved
+CMD_DISPLAY_TIME,1F,1F,True,DisplayTimeReq; DisplayTimeReq$1; DisplayTimeReq$2; DisplayTimeReq$3; DisplayTimeReq$4,,unverified,unresolved
+CMD_ECG_MEASURE_TIME,70,70,False,,,unverified,unresolved
+CMD_ECG_STATUS_DATA,6F,6F,False,,,unverified,unresolved
+CMD_FANWAN,05,05,True,PalmScreenReq,,unverified,unresolved
+CMD_FIND_THE_PHONE,22,22,False,,,unverified,unresolved
+CMD_GET_ALARM_CLOCK,24,24,True,ReadAlarmReq,,unverified,unresolved
+CMD_GET_ANCS_ON_OFF,61,61,False,,,unverified,unresolved
+CMD_GET_BAND_PRESSURE,14,14,True,ReadPressureReq,,unverified,unresolved
+CMD_GET_BRIGHTNESS,1B,1B,True,BrightnessSettingsReq; BrightnessSettingsReq$1; BrightnessSettingsReq$2,Brightness,rejected_on_target,"SDK read [1]; SDK write [2, level]. Target rejected read with 9B EE. Range unknown. No write test."
+CMD_GET_DEGREE_SWITCH,19,19,True,DegreeSwitchReq; DegreeSwitchReq$1; DegreeSwitchReq$2,,unverified,unresolved
+CMD_GET_DEVICE_ELECTRICITY_VALUE,03,03,True,,Battery,verified_read,Empty request. Reply payload[0] is battery percent.
+CMD_GET_DRINK_TIME,28,28,True,ReadDrinkAlarmReq,,unverified,unresolved
+CMD_GET_HEART_RATE,15,15,True,ReadHeartRateReq,,unverified,unresolved
+CMD_GET_MUSIC_SWITCH,1C,1C,True,MusicSwitchReq; MusicSwitchReq$1; MusicSwitchReq$2; MusicSwitchReq$3,,unverified,unresolved
+CMD_GET_PERSONALIZATION_SETTING,17,17,True,ReadPersonalizationSettingReq,,unverified,unresolved
+CMD_GET_SIT_LONG,26,26,False,,,unverified,unresolved
+CMD_GET_SLEEP,44,44,True,ReadSleepDetailsReq,,unverified,unresolved
+CMD_GET_SPORT,13,13,True,ReadBandSportReq,,unverified,unresolved
+CMD_GET_STEP_SOMEDAY_DETAIL,43,43,True,ReadDetailSportDataReq,,unverified,unresolved
+CMD_GET_STEP_TODAY,48,48,False,,,unverified,unresolved
+CMD_GET_STEP_TOTAL_SOMEDAY,07,07,True,ReadTotalSportDataReq,,unverified,unresolved
+CMD_GET_TIME_SETTING,0A,0A,True,TimeFormatReq; TimeFormatReq$1; TimeFormatReq$2,,unverified,unresolved
+CMD_GPS_ONLINE,54,54,False,,,unverified,unresolved
+CMD_HEALTH_ECG_DATA,6D,6D,False,,,unverified,unresolved
+CMD_HEALTH_ECG_START,6C,6C,False,,,unverified,unresolved
+CMD_HEALTH_PPG_DATA,6E,6E,False,,,unverified,unresolved
+CMD_HR_TIMING_MONITOR_CONFIRM,0E,0E,True,BpReadConformReq,,unverified,unresolved
+CMD_HR_TIMING_MONITOR_DATA,0D,0D,False,,,unverified,unresolved
+CMD_HR_TIMING_MONITOR_SWITCH,16,16,True,HeartRateSettingReq,Automatic heart rate,verified_write_readback_restored,"Read [1]. Write [2, flag, interval]. Flag: 1 enabled, 2 disabled. Read reply: action, flag, raw interval. Interval units and limits remain unresolved."
+CMD_INTELL,09,09,True,IntellReq,,unverified,unresolved
+CMD_MENSTRUATION,2B,2B,True,MenstruationReq,,unverified,unresolved
+CMD_MSG_GET_HW_AND_FW_VERSION,93,93,False,,,unverified,unresolved
+CMD_MSG_NOTIFY,72,72,True,PushMsgUintReq,Text notification,user_confirmed_display,"Payload: type, chunk count, one-based chunk index, 11 UTF-8 bytes. Final chunk is zero padded. Only one short SMS-style message tested."
+CMD_MUSIC_COMMAND,1D,1D,False,,,unverified,unresolved
+CMD_MUTE,06,06,True,DndReq,Scheduled DND,verified_write_readback_restored,"Read [1]. Write [2, flag, startHour, startMinute, endHour, endMinute]. Flag: 1 enabled, 2 disabled. Read reply: action, flag, four schedule bytes, manual-DND flag."
+CMD_ORIENTATION,29,29,True,DisplayOrientationReq,,unverified,unresolved
+CMD_PACKAGE_LENGTH,2F,2F,True,,Device-reported fragment length,observed_response_opcode,"SDK PackageLengthRsp reads unsigned payload[0]. App uses max(value,20) bytes per BLE bulk fragment. Normal capture retained two valid 2F response events but omitted payload; actual target value remains unknown."
+CMD_PHONE_GPS,74,74,True,PhoneGpsReq; PhoneGpsReq$1; PhoneGpsReq$2,,unverified,unresolved
+CMD_PHONE_NOTIFY,11,11,False,,,unverified,unresolved
+CMD_PUSH_MSG,72,72,True,PushMsgUintReq,Text notification,user_confirmed_display,"Payload: type, chunk count, one-based chunk index, 11 UTF-8 bytes. Final chunk is zero padded. Only one short SMS-style message tested."
+CMD_QUERY_DATA_DISTRIBUTION,46,46,False,,,unverified,unresolved
+CMD_REAL_TIME_HEART_RATE,1E,1E,True,RealTimeHeartRate,,unverified,unresolved
+CMD_RE_BOOT,08,08,False,,,unverified,unresolved
+CMD_RE_STORE,FF,FF,False,,,unverified,unresolved
+CMD_SEND_WEATHER_FORECAST,1A,1A,True,WeatherForecastReq; WeatherForecastReq$1,,unverified,unresolved
+CMD_SET_ALARM_CLOCK,23,23,True,SetAlarmReq,,unverified,unresolved
+CMD_SET_ANCS_ON_OFF,60,60,True,SetANCSReq,,unverified,unresolved
+CMD_SET_DEVICE_TIME,01,01,True,SetTimeReq,Clock sync and capability reply,verified_capability_reply,Normal clock-sync reply decoded into 31 capability fields; see capabilities.json.
+CMD_SET_DRINK_TIME,27,27,True,SetDrinkAlarmReq,,unverified,unresolved
+CMD_SET_PHONE_OS,04,04,True,BindAncsReq,,unverified,unresolved
+CMD_SET_SIT_LONG,25,25,True,SetSitLongReq,,unverified,unresolved
+CMD_START_HEART_RATE,69,69,True,StartHeartRateReq,,unverified,unresolved
+CMD_STOP_HEART_RATE,6A,6A,True,StopHeartRateReq,,unverified,unresolved
+CMD_TAKING_PICTURE,02,02,True,CameraReq,,unverified,unresolved
+CMD_TARGET_SETTING,21,21,True,TargetSettingReq; TargetSettingReq$1; TargetSettingReq$2; TargetSettingReq$3,,unverified,unresolved
+CMD_TEST_CLOSE,CA,CA,True,TestReqClose,,unverified,unresolved
+CMD_TEST_OPEN,C9,C9,True,TestReq,,unverified,unresolved
+CMD_TUNE_TIME_DIRECT,73,73,False,,,unverified,unresolved
+CMD_TUNE_TIME_INVERSE,74,74,True,PhoneGpsReq; PhoneGpsReq$1; PhoneGpsReq$2,,unverified,unresolved

@@ -1,0 +1,22 @@
+__pycache__/
+.venv/
+*.apk
+*.bin
+local-*
+*_result.txt
+# Android build output and private signing material
+android/build/
+android/.local/
+*.keystore
+*.jks
+*.idsig
+
+# Local captures, exports and credentials
+.env
+.env.*
+*.pass
+*.pem
+*.key
+private/
+captures/
+exports/
