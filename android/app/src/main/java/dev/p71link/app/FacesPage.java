@@ -3,40 +3,64 @@ package dev.p71link.app;
 import android.app.Activity;
 import android.content.Intent;
 import android.database.Cursor;
+import android.graphics.Bitmap;
 import android.net.Uri;
 import android.provider.OpenableColumns;
 import android.view.View;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 
 import dev.p71link.protocol.BulkProtocol;
+import dev.p71link.protocol.FaceChoice;
 import dev.p71link.protocol.ResourceTransfer;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/** Faces tab: installed faces, custom photo, and compatible face files. */
+/**
+ * Faces tab. "Your faces": designs on this phone and the watch's installed faces as cards in watch order.
+ * "Discover": the bundled Orbit design, the optional online catalog and file import.
+ */
 final class FacesPage implements MainActivity.Page {
+    private static final String[] VIEWS = {"Your faces", "Discover"};
+    private int view;
     private String message;
-    private boolean error, loading, requested;
-    private int sent, total;
-    private boolean uploading;
+    private boolean error;
+    /** Session in which an automatic list read failed; no further automatic read in that session. */
+    private long autoFailedFor = -1;
+    private MainActivity shown;
+    private final Runnable previews = () -> { if (shown != null) shown.render(); };
 
     @Override
     public void onShown(MainActivity a) {
+        shown = a;
+        FaceCatalog.listen(previews);
         WatchManager w = a.watch;
-        if (w.connected() && w.faces == null && !loading && !requested && w.bulkAvailable()) load(a);
+        if (w.connected() && w.faces == null && w.bulkAvailable() && !w.faceBusy() && autoFailedFor != w.sessionReadyAt) {
+            load(a, true);
+        }
     }
 
-    private void load(MainActivity a) {
-        loading = true;
-        requested = true;
+    @Override
+    public void onHidden(MainActivity a) {
+        FaceCatalog.unlisten(previews);
+        shown = null;
+    }
+
+    private void load(MainActivity a, boolean automatic) {
+        long session = a.watch.sessionReadyAt;
         a.watch.loadFaces(new WatchManager.Result<List<BulkProtocol.InstalledFace>>() {
-            @Override public void ok(List<BulkProtocol.InstalledFace> v) { loading = false; a.render(); }
-            @Override public void fail(String m) { loading = false; message = m; error = true; a.render(); }
+            @Override public void ok(List<BulkProtocol.InstalledFace> v) { a.render(); }
+
+            @Override public void fail(String m) {
+                if (automatic) autoFailedFor = session;
+                message = m;
+                error = true;
+                a.render();
+            }
         });
     }
 
@@ -44,61 +68,143 @@ final class FacesPage implements MainActivity.Page {
     public View build(MainActivity a) {
         WatchManager w = a.watch;
         LinearLayout page = Ui.column(a);
-        page.addView(Ui.title(a, "Faces"));
-        page.addView(Ui.subtitle(a, "Make it yours."));
-
-        LinearLayout current = Ui.card(a, Ui.HERO);
-        current.addView(Ui.text(a, "Current face", 14, Ui.ACCENT));
-        String name;
-        if (!w.connected()) name = "Connect to see your faces";
-        else if (loading) name = "Reading faces from the watch…";
-        else if (w.faces == null) name = w.bulkAvailable() ? "Not read yet" : "This connection cannot list faces";
-        else if (w.faces.isEmpty()) name = "The watch reported no installed faces";
-        else name = selectedName(w);
-        current.addView(Ui.text(a, name, 20, Ui.TEXT));
-        if (w.faces != null) current.addView(Ui.text(a, w.faces.size() + " installed", 13, Ui.TEXT2));
-        Ui.add(page, current, 0);
-
-        boolean canUse = w.connected() && w.bulkAvailable() && !uploading;
-        Ui.add(page, Ui.button(a, "Choose built-in face", true, v -> {
-            if (!w.connected()) a.toast("Connect the watch first.");
-            else a.push(new InstalledFacesPage());
-        }), 16);
-        Ui.add(page, Ui.row(a, "Photo background", "Choose a photo and crop it", null, canUse ? v -> pickPhoto(a) : null), 14);
-        if (w.caps == null || w.caps.customWallpaper) {
-            Ui.add(page, Ui.row(a, "Photo face layout", "Time, battery, and data positions", null,
-                    canUse ? v -> a.push(new LayoutPage()) : null), 10);
-        }
-        Ui.add(page, Ui.row(a, "Browse watch faces", "Compatible designs for your watch", null,
-                v -> a.push(new CatalogPage())), 10);
-        Ui.add(page, Ui.row(a, "Import face file", "Use a compatible local file", null, canUse ? v -> pickFile(a) : null), 10);
-
-        if (uploading) {
-            page.addView(Ui.status(a, "Sending to the watch… " + sent + " of " + total, Ui.TEXT2));
-            ProgressBar p = Ui.progress(a);
-            p.setMax(Math.max(total, 1));
-            p.setProgress(sent);
-            Ui.add(page, p, 4);
-            Ui.add(page, Ui.button(a, "Stop", false, v -> w.stopTransfer()), 8);
-        }
-        if (message != null) page.addView(Ui.status(a, message, error ? Ui.ERROR : Ui.TEXT2));
-        if (w.connected() && w.faces != null && !loading) {
-            Ui.add(page, Ui.button(a, "Read faces again", false, v -> load(a)), 10);
-        }
-        page.addView(Ui.note(a, "Preview before you apply a face. A file upload cannot be undone from the phone."));
+        page.addView(Ui.header(a, "Faces", currentChip(a, w)));
+        Ui.add(page, FaceUi.tabs(a, VIEWS, view, i -> {
+            view = i;
+            a.render();
+        }), 12);
+        if (view == 0) buildYours(a, page);
+        else buildDiscover(a, page);
         return page;
     }
 
-    /** Name of the current face from the 75 index only; unknown when it was not read or is invalid. */
-    static String selectedName(WatchManager w) {
+    private static View currentChip(MainActivity a, WatchManager w) {
+        if (!w.connected()) return FaceUi.chip(a, "Not connected", false);
+        if (w.faces == null || w.faceListOp.active()) return FaceUi.chip(a, "Current face not read", false);
         int row = BulkProtocol.currentRow(w.faces, w.faceIndex);
-        return row < 0 ? "Current face unknown" : pretty(w.faces.get(row).name);
+        if (row < 0) return FaceUi.chip(a, "Current face unknown", false);
+        return FaceUi.chip(a, "Current: " + FaceUi.installedTitle(row), true);
     }
 
-    static String pretty(String n) {
-        if (n == null || n.isEmpty()) return "Unnamed face";
-        int dot = n.lastIndexOf('.');
-        return dot > 0 ? n.substring(0, dot) : n;
+    private boolean canUpload(WatchManager w) { return w.connected() && w.bulkAvailable() && !w.faceBusy(); }
+
+    private void buildYours(MainActivity a, LinearLayout page) {
+        WatchManager w = a.watch;
+        View progress = FaceUi.transferProgress(a);
+        if (progress != null) Ui.add(page, progress, 8);
+        if (message != null) page.addView(Ui.status(a, message, error ? Ui.ERROR : Ui.TEXT2));
+        else if (progress == null) lastTransfer(a, page);
+
+        page.addView(Ui.section(a, "From this phone"));
+        List<View> mine = new ArrayList<>();
+        mine.add(orbitCard(a));
+        Bitmap photo = LocalFaces.lastPhoto(a, a.store);
+        if (photo != null) {
+            FaceArtView art = new FaceArtView(a);
+            art.setArt(photo, null);
+            String sub = "Sent from this phone · " + LocalFaces.sentDate(a.store, LocalFaces.PHOTO_SENT);
+            mine.add(FaceUi.card(a, art, "Your photo", sub, "Your photo, local copy. " + sub + ". Opens details.",
+                    v -> a.push(new WallpaperFacePage(WallpaperFacePage.PHOTO))));
+        }
+        mine.add(newPhotoCard(a));
+        page.addView(FaceUi.grid(a, mine));
+
+        List<BulkProtocol.InstalledFace> faces = w.faces;
+        page.addView(Ui.section(a, "On your watch" + (faces == null ? "" : " · " + faces.size() + (faces.size() == 1 ? " face" : " faces"))));
+        if (!w.connected()) {
+            page.addView(Ui.status(a, "Connect the watch to see its faces.", Ui.TEXT2));
+        } else if (!w.bulkAvailable()) {
+            page.addView(Ui.status(a, "This connection does not offer the face channel. Reconnect and try again.", Ui.ERROR));
+        } else if (w.faceListOp.active()) {
+            page.addView(Ui.status(a, "Reading faces from the watch…", Ui.TEXT2));
+        } else if (faces == null) {
+            page.addView(Ui.status(a, "Not read yet.", Ui.TEXT2));
+        } else if (faces.isEmpty()) {
+            page.addView(Ui.status(a, "The watch reported no installed faces.", Ui.TEXT2));
+        } else {
+            Ui.add(page, FaceUi.catalogControl(a, faces), 0);
+            int current = BulkProtocol.currentRow(faces, w.faceIndex);
+            List<View> cells = new ArrayList<>();
+            for (int i = 0; i < faces.size(); i++) {
+                final FaceChoice choice = FaceChoice.of(faces, i);
+                FaceUi.Art art = FaceUi.installedArt(w, faces.get(i).name);
+                FaceArtView v = new FaceArtView(a);
+                v.setArt(art.bitmap, art.placeholder);
+                v.setCurrent(i == current);
+                String title = FaceUi.installedTitle(i);
+                String sub = (art.catalog ? "Catalog preview" : "On watch") + " · #" + (i + 1);
+                String description = title + (i == current ? ", current face" : "") + ". "
+                        + (art.catalog ? "Catalog preview image, not live data." : art.placeholder + ".") + " Opens details.";
+                cells.add(FaceUi.card(a, v, title, sub, description, x -> a.push(new InstalledFacePage(choice))));
+            }
+            Ui.add(page, FaceUi.grid(a, cells), 12);
+        }
+        if (w.connected() && w.bulkAvailable() && !w.faceBusy()) {
+            Ui.add(page, Ui.button(a, faces == null ? "Read faces" : "Read faces again", false, v -> {
+                message = null;
+                load(a, false);
+                a.render();
+            }), 14);
+        }
+        page.addView(Ui.note(a, "In watch order. Current comes from the watch's face number."));
+    }
+
+    private void buildDiscover(MainActivity a, LinearLayout page) {
+        WatchManager w = a.watch;
+        View progress = FaceUi.transferProgress(a);
+        if (progress != null) Ui.add(page, progress, 8);
+        if (message != null) page.addView(Ui.status(a, message, error ? Ui.ERROR : Ui.TEXT2));
+        page.addView(Ui.section(a, "Made by P71 Link"));
+        List<View> cells = new ArrayList<>();
+        cells.add(orbitCard(a));
+        cells.add(newPhotoCard(a));
+        page.addView(FaceUi.grid(a, cells));
+
+        page.addView(Ui.section(a, "More faces"));
+        LinearLayout more = Ui.group(a);
+        Ui.addToGroup(more, Ui.item(a, R.drawable.ic_globe, "Browse watch faces", "Free " + FaceCatalog.HARDWARE + " designs · uses the internet",
+                null, v -> a.push(new CatalogPage())));
+        boolean canUse = canUpload(w);
+        Ui.addToGroup(more, Ui.item(a, R.drawable.ic_upload, "Import face file", canUse ? "A compatible .di file" : "Connect the watch first",
+                null, canUse ? v -> pickFile(a) : null));
+        if (w.caps == null || w.caps.customWallpaper) {
+            boolean linked = w.connected() && w.bulkAvailable();
+            Ui.addToGroup(more, Ui.item(a, R.drawable.ic_photo, "Photo face layout", linked ? "Time, battery and data positions" : "Connect the watch first",
+                    null, linked ? v -> a.push(new LayoutPage()) : null));
+        }
+        page.addView(more);
+        page.addView(Ui.note(a, "Uploads cannot be undone from the phone. Catalog order is not watch order."));
+    }
+
+    private void lastTransfer(MainActivity a, LinearLayout page) {
+        WatchManager w = a.watch;
+        if (w.faceUpload.lastLabel == null) return;
+        if (w.faceUpload.lastError == null) {
+            page.addView(Ui.status(a, "The watch accepted " + w.faceUpload.lastLabel + ". Check the watch.", Ui.TEXT2));
+        } else {
+            page.addView(Ui.status(a, "Sending " + w.faceUpload.lastLabel + " did not finish. " + w.faceUpload.lastError, Ui.ERROR));
+        }
+    }
+
+    private static View orbitCard(MainActivity a) {
+        FaceArtView art = new FaceArtView(a);
+        Bitmap b = LocalFaces.orbit(a);
+        art.setArt(b, "Image unavailable");
+        String date = LocalFaces.sentDate(a.store, LocalFaces.ORBIT_SENT);
+        String sub = date == null ? "Bundled design · not sent yet" : "Sent from this phone · " + date;
+        return FaceUi.card(a, art, "Orbit", sub, "Orbit, photo background made by P71 Link. " + sub + ". Opens details.",
+                v -> a.push(new WallpaperFacePage(WallpaperFacePage.ORBIT)));
+    }
+
+    private View newPhotoCard(MainActivity a) {
+        WatchManager w = a.watch;
+        FaceArtView art = new FaceArtView(a);
+        art.setAdd("Photo background");
+        boolean supported = w.caps == null || w.caps.customWallpaper;
+        boolean usable = supported && canUpload(w);
+        String sub = !supported ? "This watch does not report photo support"
+                : usable ? "Choose a photo and crop it" : "Connect the watch first";
+        return FaceUi.card(a, art, "New photo face", sub, "New photo face. " + sub + ".", usable ? v -> pickPhoto(a) : null);
     }
 
     private void pickPhoto(MainActivity a) {
@@ -145,39 +251,37 @@ final class FacesPage implements MainActivity.Page {
             return;
         }
         String size = String.format(Locale.ROOT, "%.1f KB", data.length / 1024.0);
+        final int session = a.watch.sessionToken();
         a.confirm("Send this face?", name + " (" + size + ")\n\nP71 Link cannot check what is inside this file. "
                         + "Use only faces made for " + (a.watch.deviceName == null ? "this watch" : a.watch.deviceName)
                         + ". The upload cannot be undone from the phone.", "Send",
-                () -> send(a, ResourceTransfer.Kind.VENDOR_FACE, name, data,
+                () -> send(a, ResourceTransfer.Kind.VENDOR_FACE, name, session, data,
                         "The watch accepted the face file. Check the watch; you may need to choose it."));
     }
 
-    void send(MainActivity a, ResourceTransfer.Kind kind, String name, byte[] data, String success) {
-        uploading = true;
-        sent = 0;
-        total = (data.length + ResourceTransfer.BLOCK - 1) / ResourceTransfer.BLOCK;
-        message = null;
-        a.render();
-        a.watch.upload(kind, name, data, (d, n) -> {
-            sent = d;
-            total = n;
+    void send(MainActivity a, ResourceTransfer.Kind kind, String name, int session, byte[] data, String success) {
+        if (a.watch.faceBusy()) {
+            message = "Wait for the current face action to finish.";
+            error = true;
             a.render();
-        }, new WatchManager.Result<Void>() {
+            return;
+        }
+        message = null;
+        a.watch.upload(kind, name, "the face file", session, data, (d, n) -> a.render(), new WatchManager.Result<Void>() {
             @Override public void ok(Void v) {
-                uploading = false;
                 message = success;
                 error = false;
-                load(a);
+                // The transfer owner already forgot the list and index and reads them once again.
                 a.render();
             }
 
             @Override public void fail(String m) {
-                uploading = false;
-                message = m + " The watch may keep part of the file.";
+                message = FaceUi.transferFailure(m, "file");
                 error = true;
                 a.render();
             }
         });
+        a.render();
     }
 
     static String displayName(MainActivity a, Uri uri) {

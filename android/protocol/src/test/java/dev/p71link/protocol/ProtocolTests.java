@@ -67,6 +67,8 @@ public final class ProtocolTests {
         readers();
         queue();
         transfer();
+        faces();
+        faceIntegration();
         if (args.length > 0) writeLzoVectors(args[0]);
         System.out.println("passed " + passed + ", failed " + failed);
         for (String f : failures) System.out.println("FAIL " + f);
@@ -1441,4 +1443,390 @@ public final class ProtocolTests {
             f.write(out.toString().getBytes(StandardCharsets.US_ASCII));
         }
     }
+
+    // ---- Face picker: preview identity, stale picks, preview loads, operation ownership, Orbit asset ----
+
+    /** A 35 payload in watch order from [deleteFlag, name] pairs, parsed by the production parser. */
+    static List<BulkProtocol.InstalledFace> installed(Object... flagName) {
+        java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+        b.write(flagName.length / 2);
+        for (int i = 0; i < flagName.length; i += 2) {
+            byte[] n = ((String) flagName[i + 1]).getBytes(StandardCharsets.UTF_8);
+            b.write((Boolean) flagName[i] ? 1 : 0);
+            b.write(n.length);
+            b.write(n, 0, n.length);
+        }
+        return BulkProtocol.faceList(b.toByteArray());
+    }
+
+    static final String HW = "M71J_V1.0", FW = "M71J_1.00.27_231223";
+
+    static FacePreviews.Entry entry(String name, String preview) { return new FacePreviews.Entry(name, preview, HW); }
+
+    static void faces() {
+        test("catalog file name is the URL basename", () -> {
+            eq(FacePreviews.fileName("https://files.example.invalid/watchface/M71J_V1.0/0a1b2c3d4e5f6071.di"), "0a1b2c3d4e5f6071.di", "basename");
+            eq(FacePreviews.fileName("https://files.example.invalid/watchface/"), null, "no basename");
+            eq(FacePreviews.fileName(null), null, "null");
+        });
+        test("installed names map to their own exact catalog image, not catalog position", () -> {
+            List<FacePreviews.Entry> cat = Arrays.asList(entry("aaaa.di", "https://p.invalid/a.png"),
+                    entry("bbbb.di", "https://p.invalid/b.png"), entry("cccc.di", "https://p.invalid/c.png"));
+            FacePreviews.Index ix = new FacePreviews.Index(cat, HW);
+            // Watch order differs from catalog order; each row resolves by its own name.
+            List<BulkProtocol.InstalledFace> watch = installed(false, "cccc.di", true, "aaaa.di", false, "bbbb.di");
+            String[] want = {"https://p.invalid/c.png", "https://p.invalid/a.png", "https://p.invalid/b.png"};
+            for (int i = 0; i < watch.size(); i++) {
+                FacePreviews.Match m = ix.find(watch.get(i).name, FW);
+                eq(m.status, FacePreviews.Status.MATCH, "row " + i);
+                eq(m.previewUrl, want[i], "row " + i + " image");
+            }
+        });
+        test("no substring, case, whitespace or extension-less matches", () -> {
+            FacePreviews.Index ix = new FacePreviews.Index(Arrays.asList(entry("aaaa.di", "https://p.invalid/a.png")), HW);
+            for (String n : new String[]{"AAAA.di", "aaaa.DI", "aaaa", "xaaaa.di", "aaaa.di.bak", " aaaa.di", "aaaa.di ", "aa"}) {
+                FacePreviews.Match m = ix.find(n, FW);
+                eq(m.status, FacePreviews.Status.NO_MATCH, n);
+                eq(m.previewUrl, null, n + " has no image");
+            }
+        });
+        test("unknown installed names stay unavailable", () -> {
+            FacePreviews.Index ix = new FacePreviews.Index(Arrays.asList(entry("aaaa.di", "https://p.invalid/a.png")), HW);
+            eq(ix.find("time2_bg_img.ui", FW).status, FacePreviews.Status.NO_MATCH, "photo background name");
+            eq(ix.find("zzzz.di", FW).previewUrl, null, "unknown");
+            eq(ix.find("", FW).status, FacePreviews.Status.UNNAMED, "empty");
+            eq(ix.find(null, FW).status, FacePreviews.Status.UNNAMED, "null");
+            eq(new FacePreviews.Index(null, HW).find("aaaa.di", FW).status, FacePreviews.Status.NO_MATCH, "no catalog");
+        });
+        test("other hardware entries are never used", () -> {
+            List<FacePreviews.Entry> cat = Arrays.asList(new FacePreviews.Entry("aaaa.di", "https://p.invalid/other.png", "M72X_V2.0"),
+                    entry("bbbb.di", "https://p.invalid/b.png"), new FacePreviews.Entry("bbbb.di", "https://p.invalid/b2.png", "M72X_V2.0"));
+            FacePreviews.Index ix = new FacePreviews.Index(cat, HW);
+            eq(ix.find("aaaa.di", FW).status, FacePreviews.Status.NO_MATCH, "only other hardware has it");
+            eq(ix.find("bbbb.di", FW).previewUrl, "https://p.invalid/b.png", "same hardware wins, other ignored");
+            eq(ix.find("bbbb.di", "M72X_2.00.1").status, FacePreviews.Status.OTHER_HARDWARE, "watch reports another model");
+            eq(ix.find("bbbb.di", null).status, FacePreviews.Status.MATCH, "unread firmware: exact-name binding applies");
+            eq(ix.find("bbbb.di", "garbage").status, FacePreviews.Status.OTHER_HARDWARE, "unparseable firmware");
+        });
+        test("duplicate names with different images show none, in any order", () -> {
+            FacePreviews.Entry a1 = entry("dup.di", "https://p.invalid/1.png"), a2 = entry("dup.di", "https://p.invalid/1.png"),
+                    b = entry("dup.di", "https://p.invalid/2.png"), n = entry("dup.di", null);
+            List<List<FacePreviews.Entry>> orders = Arrays.asList(Arrays.asList(a1, a2, b), Arrays.asList(b, a1, a2),
+                    Arrays.asList(a1, b, a2), Arrays.asList(a1, n), Arrays.asList(n, a1));
+            for (List<FacePreviews.Entry> o : orders) {
+                FacePreviews.Match m = new FacePreviews.Index(o, HW).find("dup.di", FW);
+                eq(m.status, FacePreviews.Status.AMBIGUOUS, "order " + orders.indexOf(o));
+                eq(m.previewUrl, null, "no image for ambiguous");
+            }
+            FacePreviews.Match same = new FacePreviews.Index(Arrays.asList(a1, a2), HW).find("dup.di", FW);
+            eq(same.status, FacePreviews.Status.MATCH, "duplicates with one identical image are one image");
+            eq(same.previewUrl, "https://p.invalid/1.png", "that image");
+        });
+        test("an exact entry without an allowed preview has no image", () -> {
+            FacePreviews.Match m = new FacePreviews.Index(Arrays.asList(entry("aaaa.di", null)), HW).find("aaaa.di", FW);
+            eq(m.status, FacePreviews.Status.NO_IMAGE, "status");
+            eq(m.previewUrl, null, "url");
+        });
+
+        test("a face pick resolves only against the same names in the same watch order", () -> {
+            List<BulkProtocol.InstalledFace> read1 = installed(false, "aaaa.di", true, "bbbb.di", false, "cccc.di");
+            FaceChoice pick = FaceChoice.of(read1, 1);
+            eq(pick.row, 1, "row");
+            eq(pick.name, "bbbb.di", "name");
+            eq(pick.resolve(read1), 1, "same reading");
+            // A fresh reading with the same order resolves even when delete flags differ: flags are not identity.
+            eq(pick.resolve(installed(true, "aaaa.di", false, "bbbb.di", true, "cccc.di")), 1, "re-read, same order");
+            eq(pick.resolve(installed(false, "bbbb.di", false, "aaaa.di", false, "cccc.di")), -1, "reordered");
+            eq(pick.resolve(installed(false, "aaaa.di", false, "bbbb.di", false, "cccc.di", false, "dddd.di")), -1, "face added");
+            eq(pick.resolve(installed(false, "aaaa.di", false, "cccc.di")), -1, "face removed");
+            eq(pick.resolve(installed(false, "aaaa.di", false, "xxxx.di", false, "cccc.di")), -1, "row now another face");
+            eq(pick.resolve(null), -1, "list cleared by disconnect");
+            ok(FaceChoice.of(read1, 3) == null && FaceChoice.of(read1, -1) == null && FaceChoice.of(null, 0) == null, "out of range");
+        });
+        test("duplicate installed names keep their own rows", () -> {
+            List<BulkProtocol.InstalledFace> l = installed(false, "same.di", false, "same.di");
+            eq(FaceChoice.of(l, 1).resolve(installed(false, "same.di", false, "same.di")), 1, "second row stays second");
+        });
+
+        test("preview fetches coalesce and failures stay failed until an explicit retry", () -> {
+            PreviewLoads p = new PreviewLoads();
+            int fetches = 0;
+            String[] urls = new String[26];
+            for (int i = 0; i < urls.length; i++) urls[i] = "https://p.invalid/" + i + ".png";
+            for (int render = 0; render < 100; render++) for (String u : urls) if (p.start(u)) fetches++;
+            eq(fetches, 26, "one fetch per image across 100 re-renders");
+            for (String u : urls) p.finish(u, false);
+            for (int render = 0; render < 100; render++) for (String u : urls) if (p.start(u)) fetches++;
+            eq(fetches, 26, "no automatic retry after failure");
+            eq(p.state(urls[0]), PreviewLoads.State.FAILED, "failed state is stable");
+            ok(p.anyFailed(), "retry offered");
+            eq(p.retryFailed(), 26, "explicit retry resets failures");
+            for (String u : urls) if (p.start(u)) fetches++;
+            eq(fetches, 52, "one new fetch each after retry");
+            ok(!p.anyFailed(), "nothing failed while loading");
+        });
+        test("preview results: late, duplicate and eviction handling", () -> {
+            PreviewLoads p = new PreviewLoads();
+            p.finish("https://p.invalid/x.png", true);
+            eq(p.state("https://p.invalid/x.png"), PreviewLoads.State.NONE, "result without a fetch is ignored");
+            ok(p.start("https://p.invalid/a.png"), "start");
+            p.evicted("https://p.invalid/a.png");
+            ok(!p.start("https://p.invalid/a.png"), "eviction while loading does not start a second fetch");
+            p.finish("https://p.invalid/a.png", true);
+            p.finish("https://p.invalid/a.png", false);
+            eq(p.state("https://p.invalid/a.png"), PreviewLoads.State.READY, "a late second result does not flip state");
+            ok(!p.start("https://p.invalid/a.png"), "ready: no fetch");
+            p.evicted("https://p.invalid/a.png");
+            ok(p.start("https://p.invalid/a.png"), "after cache eviction, one fetch again");
+            ok(!p.start(null), "no URL, no fetch");
+        });
+        test("preview decode is bounded", () -> {
+            eq(PreviewLoads.sampleSize(240, 284, 300, 4096), 1, "catalog preview at native size");
+            eq(PreviewLoads.sampleSize(480, 568, 300, 4096), 2, "double size halves");
+            eq(PreviewLoads.sampleSize(4000, 3000, 300, 4096), 16, "large source subsampled");
+            ok(4000 / PreviewLoads.sampleSize(4000, 3000, 300, 4096) <= 300, "within bound");
+            eq(PreviewLoads.sampleSize(5000, 10, 300, 4096), -1, "oversized source refused");
+            eq(PreviewLoads.sampleSize(0, 10, 300, 4096), -1, "invalid size");
+            eq(PreviewLoads.sampleSize(-1, -1, 300, 4096), -1, "not an image");
+        });
+
+        test("face operations: one at a time, stale tickets cannot release newer ones", () -> {
+            ExclusiveOp op = new ExclusiveOp();
+            int t1 = op.begin();
+            ok(t1 > 0 && op.active(), "first begins");
+            eq(op.begin(), 0, "double submit refused");
+            ok(op.end(t1) && !op.active(), "own ticket ends it");
+            ok(!op.end(t1), "ending twice changes nothing");
+            int t2 = op.begin();
+            op.reset(); // Reconnect while t2 was in flight.
+            ok(!op.active(), "session end releases");
+            int t3 = op.begin();
+            ok(t3 > 0 && t3 != t2, "new session operation");
+            ok(!op.end(t2) && op.active() && !op.current(t2), "late result from abandoned operation is ignored");
+            ok(op.current(t3) && op.end(t3), "current ticket ends it");
+        });
+
+        test("bundled Orbit is a native opaque 240x284 RGB565 photo background", () -> {
+            java.io.File png = findUp("app/src/main/res/drawable-nodpi/face_orbit_aquryu.png");
+            java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(png);
+            eq(img.getWidth(), 240, "width");
+            eq(img.getHeight(), 284, "height");
+            int[] px = img.getRGB(0, 0, 240, 284, null, 0, 240);
+            int transparent = 0;
+            long sum = 0;
+            for (int v : px) {
+                if ((v >>> 24) != 255) transparent++;
+                sum += v & 0xffffff;
+            }
+            eq(transparent, 0, "every pixel opaque, no flattening changes the art");
+            ok(sum != 0 && sum != (long) px.length * 0xffffff, "not blank");
+            byte[] wire = BulkProtocol.rgb565Wallpaper(240, 284, px);
+            eq(wire.length, 4 + 240 * 284 * 2, "wire size");
+            hex(Arrays.copyOf(wire, 4), "f0001c01", "native width and height header");
+        });
+    }
+
+
+    // ---- Face picker integration: pending Apply identity, transfer-owned face facts, bounded fetch lanes ----
+
+    /** The manager's session identity: the gate epoch while a session is ready, otherwise 0. */
+    static final class FakeLink implements PendingApply.Session {
+        final SessionGate gate = new SessionGate();
+        boolean ready;
+
+        void connect() { gate.begin(); ready = true; }       // Every connect, even to the same watch, is a new epoch.
+
+        void disconnect() { gate.invalidate(); ready = false; }
+
+        @Override public int token() { return ready ? gate.token() : 0; }
+    }
+
+    /** The manager's face facts, forgotten by the transfer owner exactly as WatchManager wires it. */
+    static final class Facts implements FaceTransferOwner.Facts {
+        List<BulkProtocol.InstalledFace> faces;
+        Integer index;
+        boolean fresh;
+        int forgets;
+
+        @Override public void forget() { faces = null; index = null; fresh = false; forgets++; }
+    }
+
+    static void faceIntegration() {
+        test("late catalog download after page exit or re-show starts no transfer", () -> {
+            FakeLink link = new FakeLink();
+            link.connect();
+            PendingApply pending = new PendingApply(link);
+            List<Runnable> downloads = new ArrayList<>();
+            int[] transfers = {0}, stale = {0};
+            PendingApply.Ticket t = pending.arm();
+            ok(t != null && t.current(), "armed at Apply");
+            downloads.add(() -> t.proceed(() -> transfers[0]++, () -> stale[0]++));
+            pending.invalidate(); // Page hidden while the file downloads.
+            pending.invalidate(); // Page shown again.
+            for (Runnable r : downloads) r.run();
+            eq(transfers[0], 0, "no transfer from a stale download");
+            eq(stale[0], 1, "stale completion reported");
+        });
+        test("late catalog download after reconnect to the same watch starts no transfer", () -> {
+            FakeLink link = new FakeLink();
+            link.connect();
+            PendingApply pending = new PendingApply(link);
+            PendingApply.Ticket t = pending.arm();
+            int before = t.session;
+            link.disconnect();
+            ok(!t.current(), "disconnected: stale");
+            link.connect(); // Same device, new session.
+            ok(link.token() != 0 && link.token() != before, "new session token");
+            int[] transfers = {0};
+            ok(!t.proceed(() -> transfers[0]++, () -> { }) && transfers[0] == 0, "refused before any transfer");
+            PendingApply.Ticket fresh = pending.arm();
+            ok(fresh.proceed(() -> transfers[0]++, () -> { }) && transfers[0] == 1, "a new Apply in the new session proceeds");
+            eq(fresh.session, link.token(), "ticket carries the session the manager re-checks");
+            link.ready = false;
+            ok(new PendingApply(link).arm() == null, "no ready session, no Apply");
+        });
+
+        test("any transfer makes the face list, order and current index unknown until fresh 35 and 75", () -> {
+            Facts f = new Facts();
+            f.faces = installed(false, "aaaa.di", true, "bbbb.di", false, "cccc.di");
+            f.index = 2;
+            f.fresh = true;
+            FaceChoice pick = FaceChoice.of(f.faces, 2);
+            FaceTransferOwner owner = new FaceTransferOwner(f);
+            int t = owner.begin("the Orbit background", 34);
+            ok(t > 0, "transfer begins");
+            ok(f.faces == null && f.index == null && !f.fresh, "facts forgotten before any block is sent");
+            eq(BulkProtocol.currentRow(f.faces, f.index), -1, "no current badge during the transfer");
+            eq(pick.resolve(f.faces), -1, "no installed-row selection during the transfer");
+            eq(owner.begin("your photo", 34), 0, "second transfer refused");
+            ok(owner.finish(t, null), "accepted: one refresh requested");
+            ok(f.faces == null && f.index == null, "still unknown after acceptance");
+            ok(!owner.finish(t, null), "refresh requested only once");
+            // Fresh 35: a list without an index is not current yet; fresh 75 then marks it.
+            f.faces = installed(false, "aaaa.di", true, "bbbb.di", false, "cccc.di", false, "dddd.di");
+            eq(BulkProtocol.currentRow(f.faces, f.index), -1, "fresh 35 alone: current unknown");
+            eq(pick.resolve(f.faces), -1, "old pick does not address the changed list");
+            f.index = 4;
+            eq(BulkProtocol.currentRow(f.faces, f.index), 3, "fresh 75 marks the current row");
+        });
+        test("partial transfer failure and a hidden page leave no old facts current", () -> {
+            Facts f = new Facts();
+            FaceTransferOwner owner = new FaceTransferOwner(f);
+            f.faces = installed(false, "aaaa.di");
+            f.index = 1;
+            int t = owner.begin("Face 12", 40);
+            ok(owner.progress(t, 17, 40) && owner.sent == 17, "progress recorded by the owner");
+            f.faces = installed(false, "aaaa.di"); // A screen must not be able to resurrect the old list...
+            f.index = 1;
+            ok(owner.finish(t, "Stopped."), "failure still requests one refresh");
+            ok(f.faces == null && f.index == null, "...the end of the transfer forgets it again");
+            eq(owner.lastLabel, "Face 12", "outcome kept for other screens");
+            eq(owner.lastError, "Stopped.", "failure recorded without the initiating page");
+        });
+        test("reconnect during a transfer: outcome unknown, late completion ignored", () -> {
+            Facts f = new Facts();
+            FaceTransferOwner owner = new FaceTransferOwner(f);
+            int t = owner.begin("your photo", 34);
+            owner.reset("The link ended during the transfer.");
+            ok(!owner.active(), "released");
+            eq(owner.lastError, "The link ended during the transfer.", "recorded as unknown");
+            ok(!owner.progress(t, 5, 34) && owner.sent == 0, "late progress ignored");
+            ok(!owner.finish(t, null), "late success neither refreshes nor claims acceptance");
+            eq(owner.lastError, "The link ended during the transfer.", "outcome not overwritten");
+            int t2 = owner.begin("the Orbit background", 34);
+            ok(t2 > 0 && !owner.finish(t, null) && owner.active(), "old ticket cannot end a new transfer");
+        });
+
+        test("preview saturation is bounded and an explicit download still progresses", () -> {
+            FetchLanes lanes = new FetchLanes(2, 6, 2, 4);
+            PreviewLoads loads = new PreviewLoads(lanes.previewCapacity());
+            java.util.concurrent.CountDownLatch hold = new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.atomic.AtomicInteger ran = new java.util.concurrent.atomic.AtomicInteger();
+            Runnable blocked = () -> {
+                try {
+                    hold.await();
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+                ran.incrementAndGet();
+            };
+            int started = 0;
+            // Three catalog pages of 20, each re-rendered 10 times, through FaceCatalog.preview's admission order.
+            for (int pg = 0; pg < 3; pg++) {
+                for (int render = 0; render < 10; render++) {
+                    for (int i = 0; i < 20; i++) {
+                        String u = "https://p.invalid/" + (pg * 20 + i) + ".png";
+                        if (loads.start(u)) {
+                            started++;
+                            if (!lanes.preview(u, blocked)) loads.cancel(u);
+                        }
+                    }
+                }
+            }
+            eq(started, 8, "outstanding previews capped at the lane capacity");
+            eq(loads.loading(), 8, "accounting matches");
+            ok(!lanes.preview("extra", blocked), "a full preview lane refuses instead of growing");
+            java.util.concurrent.CountDownLatch downloaded = new java.util.concurrent.CountDownLatch(1);
+            ok(lanes.control(downloaded::countDown), "explicit download accepted while previews are saturated");
+            ok(downloaded.await(5, java.util.concurrent.TimeUnit.SECONDS), "download ran without waiting for previews");
+            // Page change: queued previews of the old page are dropped and become requestable again.
+            List<String> dropped = lanes.dropQueuedPreviews();
+            eq(dropped.size(), 6, "queued previews dropped, running ones kept");
+            for (String u : dropped) loads.cancel(u);
+            eq(loads.loading(), 2, "only running fetches remain outstanding");
+            eq(loads.state(dropped.get(0)), PreviewLoads.State.NONE, "dropped image waits for its page");
+            int admitted = 0;
+            for (int i = 0; i < 20; i++) {
+                String u = "https://p.invalid/new" + i + ".png";
+                if (loads.start(u) && lanes.preview(u, blocked)) admitted++;
+            }
+            eq(admitted, 6, "the visible page gets the freed slots promptly");
+            hold.countDown();
+        });
+        test("catalog control lane refuses when full instead of queueing without bound", () -> {
+            FetchLanes lanes = new FetchLanes(2, 6, 2, 4);
+            java.util.concurrent.CountDownLatch hold = new java.util.concurrent.CountDownLatch(1);
+            Runnable blocked = () -> {
+                try {
+                    hold.await();
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+            };
+            int accepted = 0;
+            for (int i = 0; i < 10; i++) if (lanes.control(blocked)) accepted++;
+            eq(accepted, 6, "two running plus four queued");
+            hold.countDown();
+        });
+        test("bounded previews: failures stay failed until explicit retry", () -> {
+            PreviewLoads loads = new PreviewLoads(2);
+            ok(loads.start("a") && loads.start("b") && !loads.start("c"), "cap of two");
+            loads.finish("a", false);
+            ok(loads.start("c"), "slot freed by a finished fetch");
+            for (int render = 0; render < 50; render++) ok(!loads.start("a"), "failed image not refetched by renders");
+            loads.finish("b", true);
+            loads.finish("c", true);
+            eq(loads.retryFailed(), 1, "explicit retry");
+            ok(loads.start("a"), "retried once");
+            loads.cancel("a");
+            loads.cancel("a");
+            eq(loads.loading(), 0, "double cancel does not underflow");
+        });
+    }
+
+    /** A repository file located from the compiled test classes, so the check never skips silently. */
+    static java.io.File findUp(String relative) throws IOException {
+        java.io.File dir;
+        try {
+            dir = new java.io.File(ProtocolTests.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        } catch (java.net.URISyntaxException e) {
+            throw new IOException(e);
+        }
+        for (int i = 0; i < 6 && dir != null; i++, dir = dir.getParentFile()) {
+            java.io.File f = new java.io.File(dir, relative);
+            if (f.isFile()) return f;
+        }
+        throw new IOException("missing " + relative);
+    }
+
 }

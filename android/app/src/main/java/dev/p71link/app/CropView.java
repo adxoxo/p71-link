@@ -8,7 +8,6 @@ import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
-import android.graphics.Typeface;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
@@ -26,11 +25,14 @@ final class CropView extends View {
     private final Paint image = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
     private final Paint shade = new Paint();
     private final Paint outline = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint overlay = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint overlay = new Paint(Paint.ANTI_ALIAS_FLAG), overlayBox = new Paint(Paint.ANTI_ALIAS_FLAG);
+    /** Positions read from the watch, or null: then the markers show illustrative defaults. */
+    private java.util.List<dev.p71link.protocol.BulkProtocol.LayoutEntry> layout;
     private final ScaleGestureDetector scaler;
     private float lastX, lastY, minScale;
     private boolean initialised;
-    boolean showOverlay = true;
+    /** Position markers stay off until the user asks to see them. */
+    boolean showOverlay;
 
     CropView(Context c, Bitmap source, int outW, int outH, int radius) {
         super(c);
@@ -42,8 +44,7 @@ final class CropView extends View {
         outline.setStyle(Paint.Style.STROKE);
         outline.setStrokeWidth(Ui.dp(c, 2));
         outline.setColor(Ui.ACCENT);
-        overlay.setColor(Color.WHITE);
-        overlay.setTypeface(Typeface.DEFAULT_BOLD);
+        FaceArtView.styleMarkers(overlay, overlayBox, Ui.dp(c, 1));
         scaler = new ScaleGestureDetector(c, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
             @Override
             public boolean onScale(ScaleGestureDetector d) {
@@ -58,6 +59,12 @@ final class CropView extends View {
             }
         });
         setContentDescription("Photo crop area. Drag to move the photo and pinch to zoom.");
+    }
+
+    /** Use the watch's stored layout for the markers, or null for illustrative default positions. */
+    void setLayout(java.util.List<dev.p71link.protocol.BulkProtocol.LayoutEntry> fromWatch) {
+        layout = fromWatch;
+        invalidate();
     }
 
     @Override
@@ -147,11 +154,7 @@ final class CropView extends View {
         c.drawRoundRect(frame, r, r, outline);
         if (showOverlay) {
             // Named placeholders mark where the watch draws its own items. They are not watch readings.
-            overlay.setTextSize(30 * scale);
-            c.drawText("[time]", frame.left + 28 * scale, frame.top + (78 + 34) * scale, overlay);
-            overlay.setTextSize(16 * scale);
-            c.drawText("[battery]", frame.left + 93 * scale, frame.top + (17 + 20) * scale, overlay);
-            c.drawText("[data]", frame.left + 39 * scale, frame.top + (215 + 26) * scale, overlay);
+            FaceArtView.drawMarkers(c, frame, scale, layout, overlay, overlayBox);
         }
     }
 

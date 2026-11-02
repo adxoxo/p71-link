@@ -16,9 +16,6 @@ import java.util.List;
  */
 final class ActivityPage implements MainActivity.Page {
     static final String NA = "unavailable";
-    private boolean syncing;
-    private String step, message;
-    private boolean error;
 
     static String dateOf(JSONObject record) {
         JSONObject v = record == null ? null : record.optJSONObject("values");
@@ -90,30 +87,13 @@ final class ActivityPage implements MainActivity.Page {
         page.addView(Ui.title(a, "Activity and sleep"));
         page.addView(Ui.subtitle(a, "History comes from the watch when you sync. Nothing syncs on its own."));
 
-        Ui.add(page, Ui.button(a, syncing ? "Syncing… " + (step == null ? "" : step) : "Sync history", !syncing, syncing ? null : v -> {
-            if (!w.connected()) {
-                message = "Connect the watch first.";
-                error = true;
-                a.render();
-                return;
-            }
-            syncing = true;
-            message = null;
-            a.render();
-            new HistorySync(w, log, new HistorySync.Listener() {
-                @Override public void progress(String s) { step = s; a.render(); }
-
-                @Override public void done(List<String> saved, String failure) {
-                    syncing = false;
-                    step = null;
-                    String got = saved.isEmpty() ? "No new records were saved." : "Saved " + String.join(", ", saved) + ".";
-                    message = failure == null ? got : failure + " " + got;
-                    error = failure != null;
-                    a.render();
-                }
-            }).start();
-        }), 0);
-        if (message != null) page.addView(Ui.status(a, message, error ? Ui.ERROR : Ui.TEXT2));
+        // The same app-wide sync as Health > Read history; one run at a time.
+        boolean syncing = HistoryRun.running();
+        Ui.add(page, Ui.button(a, syncing ? "Syncing… " + (HistoryRun.step == null ? "" : HistoryRun.step) : "Sync history", !syncing,
+                syncing ? null : v -> HistoryRun.start(w, log)), 0);
+        if (!syncing && HistoryRun.message != null) {
+            page.addView(Ui.status(a, HistoryRun.message, HistoryRun.error ? Ui.ERROR : Ui.TEXT2));
+        }
 
         page.addView(Ui.section(a, "Steps by day"));
         List<JSONObject> days = new ArrayList<>(log.ofKind("activity"));

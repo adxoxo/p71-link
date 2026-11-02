@@ -2,6 +2,7 @@ package dev.p71link.app;
 
 import android.app.TimePickerDialog;
 import android.view.View;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.Switch;
 import android.widget.TextView;
@@ -35,97 +36,23 @@ final class WatchPage implements MainActivity.Page {
     public View build(MainActivity a) {
         WatchManager w = a.watch;
         LinearLayout page = Ui.column(a);
-        page.addView(Ui.title(a, "Watch"));
-
-        // Hero card.
-        LinearLayout hero = Ui.card(a, Ui.HERO);
-        String name = w.deviceName != null ? w.deviceName : "No watch yet";
-        hero.addView(Ui.text(a, name, 18, Ui.TEXT));
         String state;
         switch (w.state) {
             case READY: state = "Connected"; break;
             case SCANNING: state = "Searching…"; break;
             case CONNECTING: state = "Connecting…"; break;
-            default: state = w.hasSavedWatch() ? "Not connected" : "Tap Connect to find your watch";
+            default: state = "Not connected";
         }
-        hero.addView(Ui.text(a, state, 14, w.connected() ? Ui.ACCENT : Ui.TEXT2));
-        LinearLayout batteryRow = new LinearLayout(a);
-        batteryRow.setOrientation(LinearLayout.HORIZONTAL);
-        batteryRow.setGravity(android.view.Gravity.BOTTOM);
-        TextView level = Ui.text(a, w.connected() && w.battery != null ? w.battery + "%" : "—", 40, Ui.TEXT);
-        batteryRow.addView(level);
-        TextView label = Ui.text(a, "  battery", 14, Ui.TEXT2);
-        label.setPadding(0, 0, 0, Ui.dp(a, 10));
-        batteryRow.addView(label);
-        batteryRow.setContentDescription(w.connected() && w.battery != null ? "Battery " + w.battery + " percent" : "Battery unknown");
-        hero.addView(batteryRow);
-        if (w.status != null) hero.addView(Ui.text(a, w.status, 13, Ui.TEXT2));
-        if (!w.connected()) {
-            boolean working = w.state == WatchManager.State.SCANNING || w.state == WatchManager.State.CONNECTING;
-            Ui.add(hero, Ui.button(a, working ? "Stop" : "Connect", !working, v -> {
-                if (working) w.userDisconnect();
-                else a.withBluetooth(w::userConnect);
-            }), 12);
-        }
-        Ui.add(page, hero, 4);
+        page.addView(Ui.header(a, "Watch", Ui.chip(a, state, w.connected())));
+        Ui.add(page, deviceCard(a, w), 4);
 
         if (!w.connected()) {
-            page.addView(Ui.note(a, "Controls appear after the watch connects. Settings are read from the watch, not assumed."));
+            page.addView(Ui.note(a, "Settings are read from the watch after it connects."));
             if (message != null) page.addView(Ui.status(a, message, messageColor));
             return page;
         }
 
-        page.addView(Ui.section(a, "Your watch"));
-        if (w.settingsLoading) page.addView(Ui.status(a, "Reading settings from the watch…", Ui.TEXT2));
-        if (w.settingsError != null) {
-            page.addView(Ui.status(a, w.settingsError, Ui.ERROR));
-            Ui.add(page, Ui.button(a, "Read again", false, v -> w.loadWatchSettings()), 6);
-        }
-        if (w.needsFreshRead) {
-            page.addView(Ui.status(a, "An earlier change has an unknown result. Read the settings again first.", Ui.WARN));
-            Ui.add(page, Ui.button(a, "Read settings", false, v -> w.loadWatchSettings()), 6);
-        }
-        boolean editable = !busy && !w.settingsLoading && !w.needsFreshRead;
-
-        // Do not disturb.
-        if (w.dnd != null) {
-            Settings.Dnd d = w.dnd;
-            Switch s = Ui.toggle(a, d.enabled, editable, "Do not disturb");
-            s.setOnCheckedChangeListener((b, on) -> {
-                if (on == d.enabled) return;
-                busy = true;
-                a.render();
-                w.setDnd(d.withEnabled(on), result(a, v -> on ? "Do not disturb schedule is on." : "Do not disturb schedule is off."));
-            });
-            Ui.add(page, Ui.row(a, "Do not disturb", Ui.hhmm(d.startHour, d.startMinute) + "–" + Ui.hhmm(d.endHour, d.endMinute),
-                    s, editable ? v -> editDnd(a, d) : null), 0);
-        }
-        // Raise wrist.
-        if (w.wrist != null) {
-            Settings.Wrist wr = w.wrist;
-            Switch s = Ui.toggle(a, wr.enabled, editable, "Raise wrist to wake");
-            s.setOnCheckedChangeListener((b, on) -> {
-                if (on == wr.enabled) return;
-                busy = true;
-                a.render();
-                w.setWrist(wr.withEnabled(on), result(a, v -> "Raise to wake is " + (on ? "on." : "off.")));
-            });
-            Ui.add(page, Ui.row(a, "Raise wrist to wake", "Watch setting", s, null), 10);
-        }
-        // Display timeout.
-        if (w.display != null) {
-            Settings.Display d = w.display;
-            Ui.add(page, Ui.row(a, "Display timeout", d.seconds + " seconds", null,
-                    editable && d.hasRange() ? v -> chooseTimeout(a, d) : null), 10);
-        }
-        // Time and units.
-        if (w.timeFormat != null) {
-            Settings.TimeFormat t = w.timeFormat;
-            String sub = (t.is24Hour ? "24-hour" : "12-hour") + " · " + (t.metric ? "Metric" : "Imperial")
-                    + (w.units != null ? " · " + (w.units.celsius ? "Celsius" : "Fahrenheit") : "");
-            Ui.add(page, Ui.row(a, "Time and units", sub, null, editable ? v -> a.push(new TimeUnitsPage()) : null), 10);
-        }
-
+        // Quick actions sit next to the device they act on. Find watch is the one primary action.
         Ui.add(page, Ui.buttonPair(a,
                 Ui.button(a, "Find watch", true, v -> {
                     busy = true;
@@ -136,12 +63,136 @@ final class WatchPage implements MainActivity.Page {
                     busy = true;
                     a.render();
                     w.syncTime(result(a, x -> "Watch time set from this phone."));
-                })), 22);
+                })), 12);
         if (message != null) page.addView(Ui.status(a, message, messageColor));
+
+        page.addView(Ui.section(a, "Settings on the watch"));
+        if (w.settingsLoading) page.addView(Ui.status(a, "Reading settings from the watch…", Ui.TEXT2));
+        if (w.settingsError != null) {
+            page.addView(Ui.status(a, w.settingsError, Ui.ERROR));
+            Ui.add(page, Ui.button(a, "Read again", false, v -> w.loadWatchSettings()), 6);
+        }
+        if (w.needsFreshRead) {
+            page.addView(Ui.status(a, "An earlier change has an unknown result. Read the settings again first.", Ui.WARN));
+            Ui.add(page, Ui.button(a, "Read settings", false, v -> w.loadWatchSettings()), 6);
+        }
+        boolean editable = !busy && !w.settingsLoading && !w.needsFreshRead;
+        // A value the watch has not reported is shown as unknown and cannot be changed; it is never shown as off.
+        String unread = w.settingsLoading ? "Reading…" : "Not read";
+        LinearLayout g = Ui.group(a);
+
+        Settings.Dnd dnd = w.dnd;
+        View dndTrail;
+        if (dnd != null) {
+            Switch s = Ui.toggle(a, dnd.enabled, editable, "Do not disturb");
+            s.setOnCheckedChangeListener((b, on) -> {
+                if (on == dnd.enabled) return;
+                busy = true;
+                a.render();
+                w.setDnd(dnd.withEnabled(on), result(a, v -> on ? "Do not disturb schedule is on." : "Do not disturb schedule is off."));
+            });
+            dndTrail = s;
+        } else {
+            dndTrail = Ui.unknownToggle(a);
+        }
+        Ui.addToGroup(g, Ui.item(a, R.drawable.ic_moon, "Do not disturb",
+                dnd != null ? Ui.hhmm(dnd.startHour, dnd.startMinute) + "–" + Ui.hhmm(dnd.endHour, dnd.endMinute) : unread,
+                dndTrail, editable && dnd != null ? v -> editDnd(a, dnd) : null));
+
+        Settings.Wrist wr = w.wrist;
+        View wristTrail;
+        if (wr != null) {
+            Switch s = Ui.toggle(a, wr.enabled, editable, "Raise wrist to wake");
+            s.setOnCheckedChangeListener((b, on) -> {
+                if (on == wr.enabled) return;
+                busy = true;
+                a.render();
+                w.setWrist(wr.withEnabled(on), result(a, v -> "Raise to wake is " + (on ? "on." : "off.")));
+            });
+            wristTrail = s;
+        } else {
+            wristTrail = Ui.unknownToggle(a);
+        }
+        Ui.addToGroup(g, Ui.item(a, R.drawable.ic_wrist, "Raise wrist to wake", wr != null ? "Watch setting" : unread, wristTrail, null));
+
+        Settings.Display d = w.display;
+        Ui.addToGroup(g, Ui.item(a, R.drawable.ic_timer, "Display timeout", d != null ? d.seconds + " seconds" : unread, null,
+                editable && d != null && d.hasRange() ? v -> chooseTimeout(a, d) : null));
+
+        Settings.TimeFormat tf = w.timeFormat;
+        String units = tf == null ? unread : (tf.is24Hour ? "24-hour" : "12-hour") + " · " + (tf.metric ? "Metric" : "Imperial")
+                + (w.units != null ? " · " + (w.units.celsius ? "Celsius" : "Fahrenheit") : "");
+        Ui.addToGroup(g, Ui.item(a, R.drawable.ic_globe, "Time and units", units, null,
+                editable && tf != null ? v -> a.push(new TimeUnitsPage()) : null));
+        page.addView(g);
+
         long synced = a.store.lastTimeSync();
         String when = synced == 0 ? "never" : DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(new Date(synced));
-        page.addView(Ui.note(a, "Updated when you open this screen. Time last set: " + when + "."));
+        page.addView(Ui.note(a, "Read when this screen opens. Time last set: " + when + "."));
         return page;
+    }
+
+    /** Device name, the bundled Orbit artwork, battery or an unread dash, link state, and Details. */
+    private static View deviceCard(MainActivity a, WatchManager w) {
+        LinearLayout card = Ui.group(a);
+        int p = Ui.dp(a, 16);
+        card.setPadding(p, p, p, p);
+        LinearLayout row = new LinearLayout(a);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+
+        android.graphics.Bitmap orbit = LocalFaces.orbit(a);
+        if (orbit != null) {
+            ImageView art = new ImageView(a);
+            art.setImageBitmap(orbit);
+            art.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            art.setBackground(Ui.rounded(Ui.BG, Ui.dp(a, 15)));
+            art.setClipToOutline(true);
+            // Bundled artwork, not a picture read from the watch.
+            art.setContentDescription("Orbit artwork bundled with P71 Link");
+            row.addView(art, new LinearLayout.LayoutParams(Ui.dp(a, 72), Math.round(Ui.dp(a, 72) * 284f / 240f)));
+        }
+
+        LinearLayout info = Ui.column(a);
+        info.addView(Ui.text(a, w.deviceName != null ? w.deviceName : "No watch yet", 18, Ui.TEXT));
+        info.addView(Ui.text(a, "Artwork: Orbit", 13, Ui.MUTED));
+        TextView label = Ui.text(a, "Battery", 13, Ui.TEXT2);
+        label.setPadding(0, Ui.dp(a, 10), 0, 0);
+        info.addView(label);
+        boolean known = w.connected() && w.battery != null;
+        LinearLayout battery = new LinearLayout(a);
+        battery.setOrientation(LinearLayout.HORIZONTAL);
+        battery.setGravity(android.view.Gravity.BOTTOM);
+        TextView level = Ui.text(a, known ? w.battery + "%" : "–", 26, Ui.TEXT);
+        level.setFontFeatureSettings("tnum"); // Digits keep their width when the value changes.
+        battery.addView(level);
+        if (!known) {
+            TextView nr = Ui.text(a, "  not read", 13, Ui.MUTED);
+            nr.setPadding(0, 0, 0, Ui.dp(a, 4));
+            battery.addView(nr);
+        }
+        battery.setContentDescription(known ? "Battery " + w.battery + " percent" : "Battery not read");
+        info.addView(battery);
+        if (w.hasSavedWatch() || w.connected()) info.addView(Ui.link(a, "Details", v -> a.push(new DevicePage())));
+        LinearLayout.LayoutParams il = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+        il.setMarginStart(Ui.dp(a, orbit != null ? 16 : 0));
+        row.addView(info, il);
+        card.addView(row);
+
+        if (w.status != null) {
+            TextView st = Ui.text(a, w.status, 13, Ui.TEXT2);
+            st.setPadding(0, Ui.dp(a, 10), 0, 0);
+            st.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+            card.addView(st);
+        }
+        if (!w.connected()) {
+            boolean working = w.state == WatchManager.State.SCANNING || w.state == WatchManager.State.CONNECTING;
+            Ui.add(card, Ui.button(a, working ? "Stop" : "Connect", !working, v -> {
+                if (working) w.userDisconnect();
+                else a.withBluetooth(w::userConnect);
+            }), 12);
+        }
+        return card;
     }
 
     interface Text<T> { String of(T v); }

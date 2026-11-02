@@ -19,6 +19,14 @@
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
+    <!-- Package visibility: lists launcher apps for the notification picker and resolves their labels. No QUERY_ALL_PACKAGES. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:name=".P71App"
         android:allowBackup="false"
@@ -56,5 +64,14 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <!-- Heat index auto send alarm, and setting it again after an app update. Not exported. -->
+        <receiver
+            android:name=".HeatIndexReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

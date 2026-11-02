@@ -78,10 +78,29 @@ add("Faces", "face-list", "Installed face list (bulk 35) in watch order; record 
 add("Faces", "face-select", "Current face from one-based 75 index only; select row+1, then independent 75 readback", "watch_faces",
     "static_sdk", "none", "implemented", "index bounds, unknown when 75 absent/invalid",
     physical="live via app (review6): index 2 (b7df311af93311cf.di) to 1 and back to 2, each with separate readback; The tester saw it change and return",
-    note="A failed readback after a write leaves the current face unknown.")
-add("Faces", "photo-face", "Photo crop with [time]/[battery]/[data] position placeholders, native 240x284 RGB565 upload (31/32/33)", "custom_wallpaper", "static_sdk",
+    note="A failed readback after a write leaves the current face unknown. A new 35 list clears the old index until 75 answers. "
+         "Apply re-resolves the pick against the list held at the click (same names, same order) and is refused otherwise.")
+add("Faces", "face-picker", "Visual picker: Your faces and Discover, two-column cards in watch order, installed detail with Apply", "watch_faces",
+    "n/a", "n/a", "implemented", "pick identity: reorder, add, remove, renamed row, cleared list, duplicate names",
+    note="Installed titles are Watch face N by watch position; file names appear only in Details. The Current badge uses the 75 index only. "
+         "List read, select and upload are manager-owned and exclude each other; a new session releases them. "
+         "Any face, photo or Orbit transfer forgets the list, order and 75 index before it starts and reads them once after it ends.")
+add("Faces", "face-previews", "Installed-face catalog previews by exact file name, opt-in, same hardware only", "watch_faces",
+    "server API observed", "6 of 6 installed names had one exact catalog match (2026-11-02)", "implemented",
+    "exact-name identity, no case/substring/position match, duplicates, other hardware, coalesced loads, sticky failure, bounded decode, "
+    "bounded preview lane with download progress under saturation",
+    note="The watch lists names, never images. No vendor preview is bundled. Without one exact image the card says Preview unavailable. "
+         "Failed images retry only on Retry previews. Catalog artwork may show sample numbers and is labelled Catalog preview. "
+         "Live reliability is open: the user saw Preview unavailable on 0.2 cards, cause unconfirmed, investigation deferred by the user.")
+add("Faces", "orbit-face", "Bundled Orbit background with the aquryu logo, offline, applied through the photo background transfer", "custom_wallpaper",
+    "static_sdk", "none", "implemented", "asset 240x284 fully opaque, RGB565 wire size and header",
+    physical="user applied Orbit from the 0.2 test build and confirmed on the watch: the dragon face appears",
+    note="Shown before any upload. Apply needs the replace-photo confirmation and never selects a face. The image holds no time, date, battery or health values. "
+         "Banding and fine-line contrast were not separately assessed. Position markers show only after Show markers in detail.")
+add("Faces", "photo-face", "Photo crop with [time]/[battery]/[data] position markers, native 240x284 RGB565 upload (31/32/33)", "custom_wallpaper", "static_sdk",
     "server parameters 240x284 r50", "implemented", "RGB565 length/prefix/pixel, transfer sequencing, link loss",
-    note="No wallpaper readback exists; an overwritten photo cannot be restored.")
+    note="No wallpaper readback exists; an overwritten photo cannot be restored. Markers use the watch's stored layout when read, otherwise "
+         "they are labelled illustrative defaults. A local copy is kept after the watch accepts a photo and is never linked to an installed slot.")
 add("Faces", "face-import", "Import opaque .di face file (36/37/38), required status byte", "watch_faces", "static_sdk",
     "catalog sample is .di, 159752 bytes", "implemented", "init refusal, finish error, empty status, stop",
     note="Automatic activation after upload is unverified.")
@@ -90,11 +109,19 @@ add("Faces", "face-layout", "Photo face item positions and colours (bulk 3A), wr
     note="Vendor reads only clock colour; battery/data colours are raw bytes at the same layout. Layout restore does not restore a photo.")
 add("Faces", "face-catalog", "Optional public catalog for M71J_V1.0 (free items, HTTPS, guest token in memory)", "watch_faces",
     "server API observed", "222 faces for M71J_V1.0", "implemented", "none (network)",
-    note="User-opened only. Files sent unchanged as vendor faces. Catalog order is not the watch face order.")
+    note="User-opened only. Files sent unchanged as vendor faces. Catalog order is not the watch face order. Two-column pages of 20 with bounded preview decoding. "
+         "Previews use a bounded lane (2 running, 6 queued, dropped on page change); list and downloads use a separate bounded lane. "
+         "A download that outlives its page showing or watch session never starts a transfer.")
 add("Faces", "face-delete", "Delete installed face (39)", "watch_faces", "static_sdk", "none", "excluded", "frame only",
     physical="n/a", note="Not offered: irreversible, not needed to replace Pubu for selection or upload.")
 add("Faces", "lzo-encoding", "LZO1X block encoding (literal-only)", "watch_faces", "static_sdk", "none", "implemented",
     "independent lzo1x decode of 3076 cases", note="No compression gain; transfer speed unmeasured.")
+
+# ---- App ----
+add("App", "native-redesign", "Native four-tab redesign: grouped surfaces, icon tabs, unread settings shown as unknown, Health empty state with Read history",
+    "always", "n/a", "n/a", "implemented", "none (Android UI)",
+    note="Press feedback scales to 0.97 in 140 ms; detail push fades and rises 8 dp in 200 ms, pop fades in 160 ms; tabs and data updates do not animate. "
+         "No movement plays when the system disables animations. Health Read history and Activity share one app-owned sync run.")
 
 # ---- Health ----
 add("Health", "hr-auto", "Automatic heart rate switch (16), raw interval preserved", "always", "captured",
@@ -137,7 +164,8 @@ add("Health", "export", "Local JSON export and delete, with source and calculati
 add("More", "notify-forward", "Notification forwarding (72), empty allowlist, dedupe, bounded", "always", "captured",
     "test message displayed (user confirmed, nRF path)", "implemented", "fixture, multi-chunk, Unicode, 256 limit, queue",
     physical="'Hello from P71 Link' sent from the app (connection3) and seen on the watch by the tester; app-to-watch forwarding not tested; notification access not granted",
-    note="Non-SMS apps use SMS type 1 with the app name in text. Only type 1 is target-confirmed.")
+    note="Non-SMS apps use SMS type 1 with the app name in text. Only type 1 is target-confirmed. "
+         "The app picker sees launcher apps only (launcher intent in the manifest queries element, no QUERY_ALL_PACKAGES).")
 add("More", "calls", "Calls: incoming CallStyle rings (type 0); answered, cleared, or ended sends type 4; optional reject (11 action 1)", "always",
     "static_sdk", "none", "implemented", "state transitions: incoming to ongoing same key, outgoing, unknown, screening, removal, no caller text, ringing update without call type",
     note="Uses notification access and the CallStyle call type; dialers without it are not forwarded (no phone-state or call-log permission). "

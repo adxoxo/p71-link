@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Line icon, 24 dp grid, tinted at runtime. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M9.6,2.8H14.4A2.6,2.6 0 0 1 17,5.4V18.599999999999998A2.6,2.6 0 0 1 14.4,21.2H9.6A2.6,2.6 0 0 1 7,18.599999999999998V5.4A2.6,2.6 0 0 1 9.6,2.8ZM11,18h2" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

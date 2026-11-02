@@ -20,7 +20,8 @@ final class Store {
     void saveDevice(String address, String name) { p.edit().putString("address", address).putString("name", name).apply(); }
 
     void forgetDevice() {
-        p.edit().remove("address").remove("name").remove("caps").remove("firmware").remove("synced").apply();
+        p.edit().remove("address").remove("name").remove("caps").remove("firmware").remove("synced")
+                .remove(LocalFaces.ORBIT_SENT).remove(LocalFaces.PHOTO_SENT).apply();
     }
 
     String capabilitiesHex() { return p.getString("caps", null); }

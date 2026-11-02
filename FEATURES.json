@@ -289,19 +289,55 @@
       "app": "implemented",
       "automated": "index bounds, unknown when 75 absent/invalid",
       "physical": "live via app (review6): index 2 (b7df311af93311cf.di) to 1 and back to 2, each with separate readback; The tester saw it change and return",
-      "note": "A failed readback after a write leaves the current face unknown."
+      "note": "A failed readback after a write leaves the current face unknown. A new 35 list clears the old index until 75 answers. Apply re-resolves the pick against the list held at the click (same names, same order) and is refused otherwise."
+    },
+    {
+      "area": "Faces",
+      "id": "face-picker",
+      "name": "Visual picker: Your faces and Discover, two-column cards in watch order, installed detail with Apply",
+      "advertised": "watch_faces",
+      "schema": "n/a",
+      "target": "n/a",
+      "app": "implemented",
+      "automated": "pick identity: reorder, add, remove, renamed row, cleared list, duplicate names",
+      "physical": "open",
+      "note": "Installed titles are Watch face N by watch position; file names appear only in Details. The Current badge uses the 75 index only. List read, select and upload are manager-owned and exclude each other; a new session releases them. Any face, photo or Orbit transfer forgets the list, order and 75 index before it starts and reads them once after it ends."
+    },
+    {
+      "area": "Faces",
+      "id": "face-previews",
+      "name": "Installed-face catalog previews by exact file name, opt-in, same hardware only",
+      "advertised": "watch_faces",
+      "schema": "server API observed",
+      "target": "6 of 6 installed names had one exact catalog match (2026-11-02)",
+      "app": "implemented",
+      "automated": "exact-name identity, no case/substring/position match, duplicates, other hardware, coalesced loads, sticky failure, bounded decode, bounded preview lane with download progress under saturation",
+      "physical": "open",
+      "note": "The watch lists names, never images. No vendor preview is bundled. Without one exact image the card says Preview unavailable. Failed images retry only on Retry previews. Catalog artwork may show sample numbers and is labelled Catalog preview. Live reliability is open: the user saw Preview unavailable on 0.2 cards, cause unconfirmed, investigation deferred by the user."
+    },
+    {
+      "area": "Faces",
+      "id": "orbit-face",
+      "name": "Bundled Orbit background with the aquryu logo, offline, applied through the photo background transfer",
+      "advertised": "custom_wallpaper",
+      "schema": "static_sdk",
+      "target": "none",
+      "app": "implemented",
+      "automated": "asset 240x284 fully opaque, RGB565 wire size and header",
+      "physical": "user applied Orbit from the 0.2 test build and confirmed on the watch: the dragon face appears",
+      "note": "Shown before any upload. Apply needs the replace-photo confirmation and never selects a face. The image holds no time, date, battery or health values. Banding and fine-line contrast were not separately assessed. Position markers show only after Show markers in detail."
     },
     {
       "area": "Faces",
       "id": "photo-face",
-      "name": "Photo crop with [time]/[battery]/[data] position placeholders, native 240x284 RGB565 upload (31/32/33)",
+      "name": "Photo crop with [time]/[battery]/[data] position markers, native 240x284 RGB565 upload (31/32/33)",
       "advertised": "custom_wallpaper",
       "schema": "static_sdk",
       "target": "server parameters 240x284 r50",
       "app": "implemented",
       "automated": "RGB565 length/prefix/pixel, transfer sequencing, link loss",
       "physical": "open",
-      "note": "No wallpaper readback exists; an overwritten photo cannot be restored."
+      "note": "No wallpaper readback exists; an overwritten photo cannot be restored. Markers use the watch's stored layout when read, otherwise they are labelled illustrative defaults. A local copy is kept after the watch accepts a photo and is never linked to an installed slot."
     },
     {
       "area": "Faces",
@@ -337,7 +373,7 @@
       "app": "implemented",
       "automated": "none (network)",
       "physical": "open",
-      "note": "User-opened only. Files sent unchanged as vendor faces. Catalog order is not the watch face order."
+      "note": "User-opened only. Files sent unchanged as vendor faces. Catalog order is not the watch face order. Two-column pages of 20 with bounded preview decoding. Previews use a bounded lane (2 running, 6 queued, dropped on page change); list and downloads use a separate bounded lane. A download that outlives its page showing or watch session never starts a transfer."
     },
     {
       "area": "Faces",
@@ -362,6 +398,18 @@
       "automated": "independent lzo1x decode of 3076 cases",
       "physical": "open",
       "note": "No compression gain; transfer speed unmeasured."
+    },
+    {
+      "area": "App",
+      "id": "native-redesign",
+      "name": "Native four-tab redesign: grouped surfaces, icon tabs, unread settings shown as unknown, Health empty state with Read history",
+      "advertised": "always",
+      "schema": "n/a",
+      "target": "n/a",
+      "app": "implemented",
+      "automated": "none (Android UI)",
+      "physical": "open",
+      "note": "Press feedback scales to 0.97 in 140 ms; detail push fades and rises 8 dp in 200 ms, pop fades in 160 ms; tabs and data updates do not animate. No movement plays when the system disables animations. Health Read history and Activity share one app-owned sync run."
     },
     {
       "area": "Health",
@@ -517,7 +565,7 @@
       "app": "implemented",
       "automated": "fixture, multi-chunk, Unicode, 256 limit, queue",
       "physical": "'Hello from P71 Link' sent from the app (connection3) and seen on the watch by the tester; app-to-watch forwarding not tested; notification access not granted",
-      "note": "Non-SMS apps use SMS type 1 with the app name in text. Only type 1 is target-confirmed."
+      "note": "Non-SMS apps use SMS type 1 with the app name in text. Only type 1 is target-confirmed. The app picker sees launcher apps only (launcher intent in the manifest queries element, no QUERY_ALL_PACKAGES)."
     },
     {
       "area": "More",

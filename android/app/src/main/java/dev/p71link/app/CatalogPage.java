@@ -2,129 +2,175 @@ package dev.p71link.app;
 
 import android.graphics.Bitmap;
 import android.view.View;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 
+import dev.p71link.protocol.PendingApply;
+import dev.p71link.protocol.PreviewLoads;
 import dev.p71link.protocol.ResourceTransfer;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
 /** Optional catalog of free faces made for this watch's hardware. Uses the internet only here. */
 final class CatalogPage implements MainActivity.Page {
+    /** One page of cards. Paging keeps the visible previews well inside the bounded image cache. */
     private static final int PAGE = 20;
-    private boolean loading, working;
-    private int shown = PAGE;
+    /** The Apply whose download is running for this showing, or null. */
+    private PendingApply.Ticket downloading;
+    private int start;
     private String message;
     private boolean error;
-    private int sent, total;
+    private MainActivity shown;
+    private final Runnable previews = () -> { if (shown != null) shown.render(); };
+    /**
+     * A confirmed Apply waits for its dialog and its download. Leaving or re-showing this page, or any
+     * change of watch session, makes it stale; a stale download never starts a transfer.
+     */
+    private final PendingApply pending = new PendingApply(() -> P71App.get().watch.sessionToken());
 
-    private static FaceCatalog catalog() {
-        P71App app = P71App.get();
-        if (app.catalog == null) app.catalog = new FaceCatalog();
-        return app.catalog;
+    @Override
+    public void onShown(MainActivity a) {
+        shown = a;
+        pending.invalidate();
+        downloading = null; // A download from an earlier showing is stale and cannot start a transfer.
+        FaceCatalog.listen(previews);
+    }
+
+    @Override
+    public void onHidden(MainActivity a) {
+        pending.invalidate();
+        downloading = null;
+        FaceCatalog.unlisten(previews);
+        FaceCatalog c = P71App.get().catalog;
+        if (c != null) c.dropQueuedPreviews();
+        shown = null;
     }
 
     @Override
     public View build(MainActivity a) {
-        FaceCatalog cat = catalog();
+        FaceCatalog cat = FaceCatalog.get();
+        WatchManager w = a.watch;
         LinearLayout page = Ui.column(a);
         page.addView(Ui.title(a, "Browse watch faces"));
         page.addView(Ui.subtitle(a, "Free faces made for " + FaceCatalog.HARDWARE + " watches."));
         if (cat.faces == null) {
             page.addView(Ui.status(a, "This list comes from the watch maker's public server. Opening it uses the internet. "
                     + "No account is needed and nothing about you is sent.", Ui.TEXT2));
-            Ui.add(page, Ui.button(a, loading ? "Loading…" : "Load catalog", true, loading ? null : v -> {
-                loading = true;
-                message = null;
-                a.render();
-                cat.load(new FaceCatalog.Result<List<FaceCatalog.Face>>() {
-                    @Override public void ok(List<FaceCatalog.Face> f) { loading = false; a.render(); }
-                    @Override public void fail(String m) { loading = false; message = m; error = true; a.render(); }
-                });
-            }), 12);
+            Ui.add(page, FaceUi.action(a, cat.loading ? "Loading…" : cat.loadError != null ? "Try again" : "Load catalog", true,
+                    cat.loading ? null : v -> {
+                        message = null;
+                        cat.load(new FaceCatalog.Result<List<FaceCatalog.Face>>() {
+                            @Override public void ok(List<FaceCatalog.Face> f) { a.render(); }
+                            @Override public void fail(String m) { a.render(); }
+                        });
+                        a.render();
+                    }), 12);
+            if (cat.loadError != null) page.addView(Ui.status(a, cat.loadError, Ui.ERROR));
         } else {
-            page.addView(Ui.status(a, cat.faces.size() + " faces", Ui.TEXT2));
-            if (working) {
-                page.addView(Ui.status(a, total == 0 ? "Downloading…" : "Sending to the watch… " + sent + " of " + total, Ui.TEXT2));
-                ProgressBar p = Ui.progress(a);
-                p.setMax(Math.max(total, 1));
-                p.setProgress(sent);
-                Ui.add(page, p, 4);
-            }
+            int total = cat.faces.size();
+            if (start >= total) start = Math.max(0, (total - 1) / PAGE * PAGE);
+            int end = Math.min(start + PAGE, total);
+            page.addView(Ui.status(a, total == 0 ? "No faces" : String.format(Locale.getDefault(), "Faces %d–%d of %d", start + 1, end, total), Ui.TEXT2));
+            if (downloading != null && downloading.current()) page.addView(Ui.status(a, "Downloading…", Ui.TEXT2));
+            View progress = FaceUi.transferProgress(a);
+            if (progress != null) Ui.add(page, progress, 4);
             if (message != null) page.addView(Ui.status(a, message, error ? Ui.ERROR : Ui.TEXT2));
-            int n = Math.min(shown, cat.faces.size());
-            for (int i = 0; i < n; i++) {
+            boolean canSend = (downloading == null || !downloading.current()) && !w.faceBusy();
+            List<View> cells = new ArrayList<>();
+            for (int i = start; i < end; i++) {
                 FaceCatalog.Face f = cat.faces.get(i);
-                ImageView img = new ImageView(a);
-                int w = Ui.dp(a, 60);
-                img.setLayoutParams(new LinearLayout.LayoutParams(w, Math.round(w * 284f / 240f)));
-                img.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                img.setBackground(Ui.rounded(Ui.HERO, Ui.dp(a, 8)));
-                img.setClipToOutline(true);
-                img.setContentDescription("Preview of face " + (i + 1));
-                Bitmap bm = cat.cachedPreview(f.previewUrl);
-                if (bm != null) img.setImageBitmap(bm);
-                else cat.preview(f.previewUrl, new FaceCatalog.Result<Bitmap>() {
-                    @Override public void ok(Bitmap b) {
-                        if (img.isAttachedToWindow()) img.setImageBitmap(b);
-                        else a.render(); // The page was rebuilt; the cached preview shows on the new view.
-                    }
-                    @Override public void fail(String m) { }
-                });
+                Bitmap bm = cat.preview(f.previewUrl);
+                String placeholder = f.previewUrl == null || cat.previewState(f.previewUrl) == PreviewLoads.State.FAILED
+                        ? "Preview unavailable" : "Loading preview…";
+                FaceArtView art = new FaceArtView(a);
+                art.setArt(bm, placeholder);
                 String title = "Face " + (i + 1);
-                Ui.add(page, Ui.row(a, title, "Tap to send to the watch", img, working ? null : v -> choose(a, f, title)), i == 0 ? 8 : 8);
+                String sub = bm != null ? "Catalog preview · tap to send" : "Tap to send";
+                cells.add(FaceUi.card(a, art, title, sub, title + ". " + (bm != null ? "Catalog preview image." : placeholder + ".")
+                        + " Opens a send confirmation.", canSend ? v -> choose(a, f, title) : null));
             }
-            if (n < cat.faces.size()) Ui.add(page, Ui.button(a, "Show more", false, v -> { shown += PAGE; a.render(); }), 12);
+            Ui.add(page, FaceUi.grid(a, cells), 8);
+            if (cat.anyPreviewFailed()) {
+                Ui.add(page, Ui.button(a, "Retry previews", false, v -> {
+                    cat.retryPreviews();
+                    a.render();
+                }), 12);
+            }
+            if (total > PAGE) {
+                android.widget.Button prev = FaceUi.action(a, "Previous", false, start > 0 ? v -> page(a, -PAGE) : null);
+                android.widget.Button next = FaceUi.action(a, "Next", false, end < total ? v -> page(a, PAGE) : null);
+                Ui.add(page, Ui.buttonPair(a, prev, next), 12);
+            }
         }
-        if (cat.faces == null && message != null) page.addView(Ui.status(a, message, error ? Ui.ERROR : Ui.TEXT2));
-        page.addView(Ui.note(a, "Catalog order is not the order of faces on the watch. The watch may ask you to pick a new face after it arrives."));
+        page.addView(Ui.note(a, "Catalog order is not the order of faces on the watch. Catalog artwork may show sample numbers. "
+                + "The watch may ask you to pick a new face after it arrives."));
         return page;
     }
 
+    private void page(MainActivity a, int delta) {
+        start = Math.max(0, start + delta);
+        // Previews queued for the previous page must not delay the new one.
+        FaceCatalog.get().dropQueuedPreviews();
+        a.render();
+    }
+
     private void choose(MainActivity a, FaceCatalog.Face f, String title) {
-        if (!a.watch.connected() || !a.watch.bulkAvailable()) {
+        final PendingApply.Ticket ticket = a.watch.bulkAvailable() ? pending.arm() : null;
+        if (ticket == null) {
             message = "Connect the watch first.";
             error = true;
             a.render();
             return;
         }
         a.confirm("Send " + title + "?", "The face is downloaded and sent to the watch unchanged. "
-                + "The upload cannot be undone from the phone.", "Send", () -> {
-            working = true;
-            sent = 0;
-            total = 0;
+                + "The upload cannot be undone from the phone.\n\nFile: " + f.name, "Send", () -> {
+            if (!ticket.current()) {
+                stale(a);
+                return;
+            }
+            if ((downloading != null && downloading.current()) || a.watch.faceBusy()) return;
+            downloading = ticket;
             message = null;
             a.render();
-            catalog().download(f, new FaceCatalog.Result<byte[]>() {
+            FaceCatalog.get().download(f, new FaceCatalog.Result<byte[]>() {
                 @Override public void ok(byte[] data) {
-                    total = (data.length + ResourceTransfer.BLOCK - 1) / ResourceTransfer.BLOCK;
-                    a.render();
-                    a.watch.upload(ResourceTransfer.Kind.VENDOR_FACE, f.name, data, (d, n) -> {
-                        sent = d;
-                        total = n;
-                        a.render();
-                    }, new WatchManager.Result<Void>() {
-                        @Override public void ok(Void v) {
-                            working = false;
-                            a.watch.faces = null; // Read the installed list again next time.
-                            message = String.format(Locale.getDefault(), "The watch accepted %s. Check the watch; you may need to choose it.", title);
-                            error = false;
-                            a.render();
-                        }
+                    // Checked again on completion: the page or session may have changed during the download.
+                    if (downloading == ticket) downloading = null;
+                    ticket.proceed(() -> {
+                        a.watch.upload(ResourceTransfer.Kind.VENDOR_FACE, f.name, title, ticket.session, data, (d, n) -> a.render(),
+                                new WatchManager.Result<Void>() {
+                                    @Override public void ok(Void v) {
+                                        message = String.format(Locale.getDefault(), "The watch accepted %s. Check the watch; you may need to choose it.", title);
+                                        error = false;
+                                        a.render();
+                                    }
 
-                        @Override public void fail(String m) {
-                            working = false;
-                            message = m + " The watch may keep part of the file.";
-                            error = true;
-                            a.render();
-                        }
-                    });
+                                    @Override public void fail(String m) {
+                                        message = FaceUi.transferFailure(m, "file");
+                                        error = true;
+                                        a.render();
+                                    }
+                                });
+                        a.render();
+                    }, () -> stale(a));
                 }
 
-                @Override public void fail(String m) { working = false; message = m; error = true; a.render(); }
+                @Override public void fail(String m) {
+                    if (downloading == ticket) downloading = null;
+                    if (!ticket.current()) return; // Belongs to an earlier showing or session.
+                    message = m;
+                    error = true;
+                    a.render();
+                }
             });
         });
+    }
+
+    /** A pending Apply outlived its page showing or session: nothing is sent. */
+    private void stale(MainActivity a) {
+        message = "Not sent. The page or the watch connection changed before the face was ready. Nothing was sent to the watch.";
+        error = true;
+        a.render();
     }
 }

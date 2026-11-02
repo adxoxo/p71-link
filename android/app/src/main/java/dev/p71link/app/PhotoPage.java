@@ -59,8 +59,14 @@ final class PhotoPage implements MainActivity.Page {
         }
         if (crop == null) crop = new CropView(a, bitmap, width, height, RADIUS);
         if (crop.getParent() != null) ((android.view.ViewGroup) crop.getParent()).removeView(crop);
+        crop.setLayout(w.layout);
         Ui.add(page, crop, 0);
         crop.setEnabled(!uploading);
+        Ui.add(page, Ui.button(a, crop.showOverlay ? "Hide markers" : "Show markers", false, v -> {
+            crop.showOverlay = !crop.showOverlay;
+            crop.invalidate();
+            a.render();
+        }), 10);
 
         if (uploading) {
             page.addView(Ui.status(a, "Sending to the watch… " + sent + " of " + total, Ui.TEXT2));
@@ -71,26 +77,32 @@ final class PhotoPage implements MainActivity.Page {
             Ui.add(page, Ui.button(a, "Stop", false, v -> w.stopTransfer()), 8);
         } else if (!done) {
             final int fw = width, fh = height;
-            Ui.add(page, Ui.button(a, "Send to watch", true, v -> {
+            Ui.add(page, Ui.button(a, "Send to watch", true, w.faceBusy() ? null : v -> {
                 if (!w.connected() || !w.bulkAvailable()) {
                     message = "Connect the watch first.";
                     error = true;
                     a.render();
                     return;
                 }
+                final int session = w.sessionToken();
                 a.confirm("Replace the photo face?", "The current custom photo on the watch is replaced. "
-                        + "It cannot be read back or restored from the phone.", "Replace", () -> send(a, fw, fh));
+                        + "It cannot be read back or restored from the phone.", "Replace", () -> send(a, fw, fh, session));
             }), 16);
         }
         if (message != null) page.addView(Ui.status(a, message, error ? Ui.ERROR : Ui.TEXT2));
-        page.addView(Ui.note(a, "Labels in brackets only mark where the watch draws its own time, battery, and data. They are not readings and are not sent."));
+        if (crop.showOverlay) page.addView(Ui.note(a, (w.layout != null
+                ? "Labels in brackets mark where this watch's stored layout draws its own time, battery, and data."
+                : "Labels in brackets show typical default positions for illustration; this watch's layout was not read.")
+                + " They are not readings and are not sent."));
         return page;
     }
 
-    private void send(MainActivity a, int width, int height) {
+    private void send(MainActivity a, int width, int height, int session) {
         byte[] data;
+        final int[] pixels;
         try {
-            data = BulkProtocol.rgb565Wallpaper(width, height, crop.render());
+            pixels = crop.render();
+            data = BulkProtocol.rgb565Wallpaper(width, height, pixels);
         } catch (IllegalArgumentException e) {
             message = Errors.message(e);
             error = true;
@@ -102,7 +114,7 @@ final class PhotoPage implements MainActivity.Page {
         total = (data.length + ResourceTransfer.BLOCK - 1) / ResourceTransfer.BLOCK;
         message = null;
         a.render();
-        a.watch.upload(ResourceTransfer.Kind.WALLPAPER, BulkProtocol.WALLPAPER_NAME, data, (d, n) -> {
+        a.watch.upload(ResourceTransfer.Kind.WALLPAPER, BulkProtocol.WALLPAPER_NAME, "your photo", session, data, (d, n) -> {
             sent = d;
             total = n;
             a.render();
@@ -110,6 +122,8 @@ final class PhotoPage implements MainActivity.Page {
             @Override public void ok(Void v) {
                 uploading = false;
                 done = true;
+                // Local copy for the Faces screen only. It is never linked to an installed watch slot.
+                LocalFaces.savePhoto(a, a.store, pixels, width, height);
                 message = "The watch accepted the photo. Check the custom face on the watch.";
                 error = false;
                 a.render();
@@ -117,7 +131,7 @@ final class PhotoPage implements MainActivity.Page {
 
             @Override public void fail(String m) {
                 uploading = false;
-                message = m + " The watch may keep part of the photo.";
+                message = FaceUi.transferFailure(m, "photo");
                 error = true;
                 a.render();
             }

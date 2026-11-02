@@ -1,10 +1,16 @@
 package dev.p71link.app;
 
+import android.app.TimePickerDialog;
 import android.text.InputType;
+import android.view.Gravity;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.Switch;
+import android.widget.TextView;
 
+import dev.p71link.protocol.HeatIndex;
+import dev.p71link.protocol.Notifications;
 import dev.p71link.protocol.Settings;
 
 import org.json.JSONArray;
@@ -15,6 +21,9 @@ import java.util.List;
 import java.util.Locale;
 
 /**
+ * Davao City heat index at the top: worked out from a fresh Open-Meteo request at each send and sent
+ * as a text message, with an optional auto send at chosen times (see HeatIndexScheduler).
+ *
  * Optional weather for the watch. The user enters a place; the app asks the watch maker's forecast
  * service only when the user taps Get forecast. Server values are shown and sent unchanged. A record
  * missing a required field is left out, never filled in. Nothing refreshes in the background.
@@ -27,6 +36,11 @@ final class WeatherPage implements MainActivity.Page {
     private boolean busy;
     private String message;
     private boolean error;
+    // Heat index: values exist only after a real fetch on this screen; nothing is shown from memory.
+    private HeatIndex.Reading heat;
+    private long heatAt;
+    private boolean heatBusy, heatError;
+    private String heatMessage;
 
     private static JSONObject place(Store s) {
         try {
@@ -38,10 +52,15 @@ final class WeatherPage implements MainActivity.Page {
     }
 
     @Override
+    public void onShown(MainActivity a) { HeatIndexScheduler.arm(a); } // Sets the alarm again after a restart.
+
+    @Override
     public View build(MainActivity a) {
         JSONObject p = place(a.store);
         LinearLayout page = Ui.column(a);
         page.addView(Ui.title(a, "Weather"));
+        heatSection(a, page);
+        page.addView(Ui.section(a, "Watch maker forecast"));
         page.addView(Ui.subtitle(a, "Send a forecast to the watch when you choose. This uses the internet."));
         String where = p.optString("city", "");
         String coords = p.has("lat") ? String.format(Locale.ROOT, "%.3f, %.3f", p.optDouble("lat"), p.optDouble("lon")) : "";
@@ -62,6 +81,142 @@ final class WeatherPage implements MainActivity.Page {
         if (message != null) page.addView(Ui.status(a, message, error ? Ui.ERROR : Ui.TEXT2));
         page.addView(Ui.note(a, "The place you type is sent to the watch maker's forecast service. Nothing else about you is sent."));
         return page;
+    }
+
+    // ---- Davao City heat index ----------------------------------------------------------------
+
+    private void heatSection(MainActivity a, LinearLayout page) {
+        page.addView(Ui.section(a, HeatIndex.PLACE + " heat index"));
+        if (heat == null) {
+            Ui.add(page, Ui.row(a, "Not fetched yet", "Send now or Refresh gets today's values", null, null), 0);
+        } else {
+            Ui.add(page, Ui.row(a, "Now", HeatIndex.levelText(heat.nowC), value(a, heat.nowC + "°C"), null), 0);
+            Ui.add(page, Ui.row(a, "Peak", "at " + HeatIndex.hourLabel(heat.peakHour, true) + " · " + HeatIndex.levelText(heat.peakC),
+                    value(a, heat.peakC + "°C"), null), 8);
+            java.time.ZonedDateTime t = java.time.Instant.ofEpochMilli(heatAt).atZone(HeatIndex.ZONE);
+            Ui.add(page, Ui.row(a, "Source", "Open-Meteo · " + HeatIndex.clock12(t.getHour() * 60 + t.getMinute()), null, null), 8);
+        }
+        Ui.add(page, Ui.buttonPair(a,
+                Ui.button(a, heatBusy ? "Working…" : "Send now", true, heatBusy ? null : v -> heatFetch(a, true)),
+                Ui.button(a, "Refresh", false, heatBusy ? null : v -> heatFetch(a, false))), 12);
+        if (heatMessage != null) page.addView(Ui.status(a, heatMessage, heatError ? Ui.ERROR : Ui.TEXT2));
+
+        boolean on = HeatIndexScheduler.enabled(a);
+        Switch auto = Ui.toggle(a, on, true, "Auto send");
+        auto.setOnCheckedChangeListener((b, checked) -> { HeatIndexScheduler.setEnabled(a, checked); a.render(); });
+        Ui.add(page, Ui.row(a, "Auto send", "At the times below, when the watch is connected", auto, null), 12);
+        StringBuilder times = new StringBuilder();
+        for (int m : HeatIndexScheduler.times(a)) times.append(times.length() == 0 ? "" : "  ").append(HeatIndex.clock(m));
+        Ui.add(page, Ui.row(a, "Times", times.toString(), Ui.text(a, "Edit", 14, Ui.ACCENT), v -> editTimes(a)), 8);
+        String last = HeatIndexScheduler.lastResult(a);
+        page.addView(Ui.note(a, last == null ? "Last auto send: none yet."
+                : "Last auto send: " + HeatIndexScheduler.slotLabel(HeatIndexScheduler.lastSlot(a)) + " " + last));
+        page.addView(Ui.note(a, "Uses the internet at each send. Only Davao City's fixed location is sent to Open-Meteo. "
+                + "Values are worked out from Open-Meteo's temperature and humidity forecast; they are not PAGASA readings."));
+    }
+
+    private static TextView value(MainActivity a, String s) {
+        TextView t = Ui.text(a, s, 20, Ui.TEXT);
+        t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        return t;
+    }
+
+    /** A fresh request; with {@code send}, the new values go to the watch. Nothing older is ever sent. */
+    private void heatFetch(MainActivity a, boolean send) {
+        if (send && !a.watch.connected()) {
+            heatMessage = "Connect the watch first.";
+            heatError = true;
+            a.render();
+            return;
+        }
+        heatBusy = true;
+        heatMessage = null;
+        a.render();
+        HeatIndexScheduler.fetch((reading, err) -> {
+            if (err != null) {
+                heatBusy = false;
+                heat = null; // A failed request leaves no values on screen.
+                heatMessage = "Could not get the heat index: " + err + "." + (send ? " Nothing was sent to the watch." : "");
+                heatError = true;
+                a.render();
+                return;
+            }
+            heat = reading;
+            heatAt = System.currentTimeMillis();
+            if (!send) {
+                heatBusy = false;
+                a.render();
+                return;
+            }
+            a.watch.notifyText(reading.message(), Notifications.SMS, new WatchManager.Result<Void>() {
+                @Override public void ok(Void v) {
+                    heatBusy = false;
+                    heatMessage = "The watch received it. Check that the text appears.";
+                    heatError = false;
+                    a.render();
+                }
+
+                @Override public void fail(String m) { heatBusy = false; heatMessage = m; heatError = true; a.render(); }
+            });
+            a.render();
+        });
+    }
+
+    /** Edit a working copy; Save keeps 1 to 8 distinct times, sorted, and sets the alarm again. */
+    private void editTimes(MainActivity a) {
+        java.util.List<Integer> work = new ArrayList<>(HeatIndexScheduler.times(a));
+        LinearLayout box = Ui.column(a);
+        int pad = Ui.dp(a, 20);
+        box.setPadding(pad, pad / 2, pad, 0);
+        LinearLayout list = Ui.column(a);
+        box.addView(list);
+        Runnable[] refresh = new Runnable[1];
+        TextView add = Ui.link(a, "Add a time", v -> pickTime(a, 12 * 60, m -> {
+            if (work.contains(m)) { a.toast("That time is already in the list."); return; }
+            work.add(m);
+            refresh[0].run();
+        }));
+        box.addView(add);
+        refresh[0] = () -> {
+            java.util.List<Integer> sorted = HeatIndex.normalize(work);
+            work.clear();
+            work.addAll(sorted);
+            list.removeAllViews();
+            for (int idx = 0; idx < work.size(); idx++) {
+                final int i = idx, m = work.get(idx);
+                LinearLayout r = new LinearLayout(a);
+                r.setOrientation(LinearLayout.HORIZONTAL);
+                r.setGravity(Gravity.CENTER_VERTICAL);
+                r.addView(Ui.text(a, HeatIndex.clock(m), 18, Ui.TEXT), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+                r.addView(Ui.link(a, "Change", v -> pickTime(a, m, nm -> {
+                    if (nm != m && work.contains(nm)) { a.toast("That time is already in the list."); return; }
+                    work.set(i, nm);
+                    refresh[0].run();
+                })));
+                TextView remove = Ui.link(a, "Remove", v -> { work.remove(i); refresh[0].run(); });
+                enable(remove, work.size() > HeatIndex.MIN_TIMES);
+                r.addView(remove);
+                list.addView(r);
+            }
+            enable(add, work.size() < HeatIndex.MAX_TIMES);
+        };
+        refresh[0].run();
+        a.dialog().setTitle("Auto send times (Davao time)").setView(box).setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", (d, w) -> {
+                    HeatIndexScheduler.setTimes(a, work);
+                    a.render();
+                }).show();
+    }
+
+    private static void enable(TextView t, boolean on) {
+        t.setEnabled(on);
+        t.setClickable(on);
+        t.setAlpha(on ? 1f : 0.4f);
+    }
+
+    private static void pickTime(MainActivity a, int minutes, java.util.function.IntConsumer picked) {
+        new TimePickerDialog(a, android.R.style.Theme_Material_Dialog_Alert, (tp, h, m) -> picked.accept(h * 60 + m),
+                minutes / 60, minutes % 60, true).show();
     }
 
     private void editPlace(MainActivity a, JSONObject p) {

@@ -89,6 +89,21 @@ final class WatchManager implements GattSession.Owner {
     long sessionReadyAt;
     /** True when faceIndex came from a 75 read in the current session. */
     boolean faceIndexFresh;
+    /**
+     * Face operations owned here, not by a screen, so leaving a page neither loses nor duplicates them.
+     * A list read, a selection and an upload exclude each other. A new session releases all three.
+     */
+    final dev.p71link.protocol.ExclusiveOp faceListOp = new dev.p71link.protocol.ExclusiveOp(),
+            faceSelectOp = new dev.p71link.protocol.ExclusiveOp();
+    /**
+     * The face resource transfer, its progress and last outcome. Starting one forgets the installed list,
+     * its order and the current-face index, so rows and the Current badge need fresh 35 and 75 replies.
+     */
+    final dev.p71link.protocol.FaceTransferOwner faceUpload = new dev.p71link.protocol.FaceTransferOwner(() -> {
+        faces = null;
+        faceIndex = null;
+        faceIndexFresh = false;
+    });
 
     // ---- Bluetooth-thread state ----
     private volatile GattSession session;
@@ -285,6 +300,7 @@ final class WatchManager implements GattSession.Owner {
 
     private void startSession(BluetoothDevice d, boolean background) {
         final int token = gate.begin();
+        releaseFaceOps();
         state = State.CONNECTING;
         status = background ? "Waiting for the watch to come back in range." : "Connecting…";
         if (deviceName == null) deviceName = store.name();
@@ -301,6 +317,7 @@ final class WatchManager implements GattSession.Owner {
     private void disconnect() {
         userWantsLink = false;
         gate.invalidate();
+        releaseFaceOps();
         stopScan();
         ble.post(() -> {
             if (transfer != null) transfer.stop();
@@ -1028,25 +1045,74 @@ final class WatchManager implements GattSession.Owner {
         return s != null && s.hasBulk();
     }
 
+    /** True while a face list read, selection or upload is running. */
+    boolean faceBusy() { return faceListOp.active() || faceSelectOp.active() || faceUpload.active(); }
+
+    /**
+     * Identity of the ready session, or 0. Each connection attempt starts a new link epoch, so this is
+     * never just the device: a reconnect to the same watch gets a new value.
+     */
+    int sessionToken() { return state == State.READY ? gate.token() : 0; }
+
+    /** Main thread: a new or ended session cannot complete earlier face operations. */
+    private void releaseFaceOps() {
+        faceListOp.reset();
+        faceSelectOp.reset();
+        faceUpload.reset("The link ended during the transfer. The watch may keep part of the file.");
+    }
+
     void loadFaces(Result<List<BulkProtocol.InstalledFace>> r) {
+        if (faceSelectOp.active() || faceUpload.active()) {
+            r.fail("Wait for the current face change to finish.");
+            return;
+        }
+        final int t = faceListOp.begin();
+        if (t == 0) {
+            r.fail("The face list is already being read.");
+            return;
+        }
         op(new Result<byte[]>() {
             @Override public void ok(byte[] frame) {
                 List<BulkProtocol.InstalledFace> list;
                 try {
                     list = BulkProtocol.faceList(BulkProtocol.payload(frame, BulkProtocol.FACE_LIST));
                 } catch (RuntimeException e) {
+                    faceListOp.end(t);
                     r.fail(Errors.message(e));
                     return;
                 }
+                if (!faceListOp.current(t)) {
+                    r.fail("The watch is not connected.");
+                    return;
+                }
                 faces = list;
+                // The previous index belonged to the previous list; it stays unknown until 75 answers.
+                faceIndex = null;
+                faceIndexFresh = false;
                 op(new Result<Integer>() {
-                    @Override public void ok(Integer i) { faceIndex = i; faceIndexFresh = true; r.ok(list); }
-                    @Override public void fail(String m) { faceIndex = null; faceIndexFresh = false; r.ok(list); }
+                    @Override public void ok(Integer i) {
+                        if (faceListOp.end(t)) {
+                            faceIndex = i;
+                            faceIndexFresh = true;
+                        }
+                        r.ok(list);
+                    }
+
+                    @Override public void fail(String m) {
+                        if (faceListOp.end(t)) {
+                            faceIndex = null;
+                            faceIndexFresh = false;
+                        }
+                        r.ok(list);
+                    }
                 }, (c, cb) -> c.request("face index", ShortProtocol.readFaceIndex(), ShortProtocol.NO_ACTION,
                         ShortProtocol::faceIndex, cb));
             }
 
-            @Override public void fail(String m) { r.fail(m); }
+            @Override public void fail(String m) {
+                faceListOp.end(t);
+                r.fail(m);
+            }
         }, (c, cb) -> c.bulk("face list", BulkProtocol.faceListRequest(), BulkProtocol.FACE_LIST,
                 WatchClient.BULK_TIMEOUT_MS, cb));
     }
@@ -1058,10 +1124,23 @@ final class WatchManager implements GattSession.Owner {
             r.fail("Read the installed faces first.");
             return;
         }
+        if (faceListOp.active() || faceUpload.active()) {
+            r.fail("Wait for the watch to finish reading or receiving faces.");
+            return;
+        }
+        final int t = faceSelectOp.begin();
+        if (t == 0) {
+            r.fail("A face change is already in progress.");
+            return;
+        }
         int index = row + 1;
         byte[] write = ShortProtocol.selectFace(index, list.size());
         op(new Result<Integer>() {
             @Override public void ok(Integer got) {
+                if (!faceSelectOp.end(t)) {
+                    r.fail("The watch is not connected.");
+                    return;
+                }
                 faceIndex = got;
                 faceIndexFresh = true;
                 if (got == index) r.ok(got);
@@ -1070,8 +1149,10 @@ final class WatchManager implements GattSession.Owner {
 
             /** After a write attempt without a confirmed readback, the current face is unknown. */
             @Override public void fail(String m) {
-                faceIndex = null;
-                faceIndexFresh = false;
+                if (faceSelectOp.end(t)) {
+                    faceIndex = null;
+                    faceIndexFresh = false;
+                }
                 r.fail(m);
             }
         }, (c, cb) -> c.request("face select", write, ShortProtocol.NO_ACTION, f -> null, new CommandQueue.Callback<Object>() {
@@ -1083,10 +1164,59 @@ final class WatchManager implements GattSession.Owner {
         }));
     }
 
-    void upload(ResourceTransfer.Kind kind, String name, byte[] data, Progress progress, Result<Void> r) {
+    /**
+     * Upload one face resource in the ready session {@code sessionToken} captured when the user acted.
+     * A different or ended session is refused before any transfer starts. {@code label} names the
+     * resource for screens other than the one that started it.
+     */
+    void upload(ResourceTransfer.Kind kind, String name, String label, int sessionToken, byte[] data, Progress progress, Result<Void> r) {
+        if (sessionToken == 0 || sessionToken != sessionToken()) {
+            r.fail("The connection changed. Nothing was sent to the watch.");
+            return;
+        }
+        if (faceListOp.active() || faceSelectOp.active()) {
+            r.fail("Wait for the watch to finish the current face action.");
+            return;
+        }
+        final int t = faceUpload.begin(label, (data.length + ResourceTransfer.BLOCK - 1) / ResourceTransfer.BLOCK);
+        if (t == 0) {
+            r.fail("Another face transfer is running.");
+            return;
+        }
+        Progress tracked = (d, n) -> {
+            if (faceUpload.progress(t, d, n)) progress.update(d, n);
+        };
+        Result<Void> owned = new Result<Void>() {
+            @Override public void ok(Void v) {
+                if (faceUpload.finish(t, null)) refreshAfterTransfer();
+                r.ok(v);
+            }
+
+            @Override public void fail(String m) {
+                if (faceUpload.finish(t, m)) refreshAfterTransfer();
+                r.fail(m);
+            }
+        };
+        transferUpload(kind, name, sessionToken, data, tracked, owned);
+    }
+
+    /** One list and index read after a transfer ended, whichever screen is showing. No retry follows. */
+    private void refreshAfterTransfer() {
+        if (state != State.READY || !bulkAvailable() || faceBusy()) return;
+        loadFaces(new Result<List<BulkProtocol.InstalledFace>>() {
+            @Override public void ok(List<BulkProtocol.InstalledFace> v) { }
+            @Override public void fail(String m) { }
+        });
+    }
+
+    private void transferUpload(ResourceTransfer.Kind kind, String name, int sessionToken, byte[] data, Progress progress, Result<Void> r) {
         op(r, (c, cb) -> {
             GattSession s = session;
-            if (s == null || !s.hasBulk()) {
+            if (s == null || s.epoch != sessionToken) {
+                cb.onError(new IllegalStateException("The connection changed. Nothing was sent to the watch."));
+                return;
+            }
+            if (!s.hasBulk()) {
                 cb.onError(new IllegalStateException("This connection has no face transfer channel."));
                 return;
             }

@@ -11,8 +11,8 @@ PLATFORM=$SDK/platforms/android-36/android.jar
 OUT=$HERE/build
 WORK=$OUT/work
 KEYDIR=$HERE/.local
-VERSION_CODE=${VERSION_CODE:-1}
-VERSION_NAME=${VERSION_NAME:-0.1.0-dev}
+VERSION_CODE=${VERSION_CODE:-4}
+VERSION_NAME=${VERSION_NAME:-0.3.0-dev}
 
 export JAVA_HOME="$JDK"
 export PATH="$JDK/bin:$PATH"
