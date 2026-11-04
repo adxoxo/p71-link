@@ -97,6 +97,8 @@ These optional services are external dependencies. Their availability is not gua
 
 ## Protocol research
 
+- [How the Bluetooth protocol was recovered](BLUETOOTH_PROTOCOL.md): channels, app inspection, packets, and device validation.
+
 - [Capability map](CAPABILITIES.md), [structured catalog](capabilities.json) and [command index](commands.csv).
 - [Normal connection exchange](NORMAL_CONNECTION.md).
 - [Firmware access limits](FIRMWARE_ACCESS.md).
